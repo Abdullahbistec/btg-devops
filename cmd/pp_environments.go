@@ -79,7 +79,28 @@ func runPPEnvironments(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("listing environments: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Found %d environment(s). Analyzing...\n", len(envs))
+	fmt.Fprintf(os.Stderr, "Found %d environment(s). Fetching DLP policies...\n", len(envs))
+
+	// PP-7: Fetch actual DLP policies for real content analysis
+	dlpPolicies, dlpErr := fetchDLPPolicies(ctx, token)
+	if dlpErr != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: could not fetch DLP policies (%v) — falling back to count-only check\n", dlpErr)
+	}
+
+	// Build env name -> list of covering policies
+	var allEnvNames []string
+	for _, e := range envs {
+		allEnvNames = append(allEnvNames, e.Name)
+	}
+	envToPolicies := map[string][]ppDLPPolicy{}
+	for _, pol := range dlpPolicies {
+		covered := dlpCoveredEnvs(pol, allEnvNames)
+		for envName := range covered {
+			envToPolicies[envName] = append(envToPolicies[envName], pol)
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Found %d DLP policy(ies). Analyzing...\n", len(dlpPolicies))
 
 	summary := PPEnvSummary{
 		TotalEnvironments:  len(envs),
@@ -93,10 +114,16 @@ func runPPEnvironments(cmd *cobra.Command, args []string) error {
 		sku := env.Properties.EnvironmentSku
 		summary.BySku[sku]++
 
-		dlpCount := env.Properties.EnvironmentPolicies.DataLossPreventionPolicies.Count
+		// PP-7: Use real DLP policy data when available, fall back to count
+		var noDLP bool
+		if dlpErr == nil {
+			noDLP = len(envToPolicies[env.Name]) == 0
+		} else {
+			noDLP = env.Properties.EnvironmentPolicies.DataLossPreventionPolicies.Count == 0
+		}
 
 		// 1. No DLP policies — critical for default env, warning for others
-		if dlpCount == 0 {
+		if noDLP {
 			sev := Warning
 			if env.Properties.IsDefault {
 				sev = Critical
@@ -106,9 +133,41 @@ func runPPEnvironments(cmd *cobra.Command, args []string) error {
 				Category:       "No DLP Policy",
 				Environment:    name,
 				EnvironmentSku: sku,
-				Description:    fmt.Sprintf("'%s' has no DLP policies — connectors are unrestricted", name),
+				Description:    fmt.Sprintf("'%s' has no DLP policies — all connectors are unrestricted", name),
 				Recommendation: "Create a DLP policy to control which connectors can share data across business and non-business groups.",
 			})
+		}
+
+		// PP-7: Check quality of existing DLP policies
+		if dlpErr == nil {
+			for _, pol := range envToPolicies[env.Name] {
+				polName := pol.Properties.DisplayName
+				if polName == "" {
+					polName = pol.Name
+				}
+				// HTTP connector not blocked → data exfiltration risk
+				if !dlpHTTPBlocked(pol) {
+					findings = append(findings, PPEnvFinding{
+						Severity:       Warning,
+						Category:       "Weak DLP — HTTP Not Blocked",
+						Environment:    name,
+						EnvironmentSku: sku,
+						Description:    fmt.Sprintf("DLP policy '%s' does not block the HTTP connector — flows can POST data to any external URL", polName),
+						Recommendation: "Add the HTTP and HTTP with Azure AD connectors to the Blocked group in DLP policy '" + polName + "'.",
+					})
+				}
+				// defaultConnectorsClassification not Blocked means new connectors auto-join a permissive group
+				if pol.Properties.DefaultConnectorsClassification != "Blocked" && pol.Properties.DefaultConnectorsClassification != "" {
+					findings = append(findings, PPEnvFinding{
+						Severity:       Info,
+						Category:       "Permissive Default Connector Class",
+						Environment:    name,
+						EnvironmentSku: sku,
+						Description:    fmt.Sprintf("DLP policy '%s' defaults new connectors to '%s' — new Microsoft connectors automatically become usable", polName, pol.Properties.DefaultConnectorsClassification),
+						Recommendation: "Set defaultConnectorsClassification to 'Blocked' so new connectors require explicit allow-listing.",
+					})
+				}
+			}
 		}
 
 		// 2. Default environment — open to all licensed users

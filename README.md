@@ -17,10 +17,17 @@ A DevOps CLI tool that uses an Azure Service Principal to examine Azure subscrip
 - **Azure AI / Cognitive Services Analysis** — Checks Cognitive Services and Azure OpenAI accounts for network security, managed identity, unused deployments, model version currency, provisioned capacity waste, and encryption configuration.
 - **Resource Group Analysis** — Detects empty resource groups, tag compliance violations (environment, owner, project), naming convention issues, and missing management locks on critical groups.
 
+- **Power Platform License Analysis** — Scans Microsoft 365 license subscriptions via the Graph API to identify unused seats, suspended licenses, and cost savings (est. monthly/annual waste in USD).
+- **Power Platform Environments** — Checks all Power Platform environments for missing DLP policies, weak DLP (HTTP connector not blocked), trial environments, disabled environments, and sprawl.
+- **Power Apps Analysis** — Enumerates all Power Apps across every environment and flags stale apps (180+ days), apps in the Default environment, premium connectors without documentation, and broadly shared apps.
+- **Power Automate Flows Analysis** — Scans all flows for suspended flows (Critical), stopped/abandoned flows, stale flows, high-risk connectors (HTTP/FTP/SMTP), broad-access connectors (SharePoint/Dataverse/SQL), and flows with no owner.
+- **Power BI Analysis** — Checks all workspaces for orphaned workspaces (no admin), empty workspaces, deleted workspaces, personal workspaces with business content, large workspaces on shared capacity, and datasets without refresh.
+
 ## Prerequisites
 
 - Go 1.21+
 - Azure Service Principal with **Reader** role on the target subscription
+- For Power Platform commands: **Power Platform Administrator** and **Power BI Administrator** roles, plus `New-PowerAppManagementApp` registration — see [docs/013-powerplatform-setup.md](docs/013-powerplatform-setup.md)
 
 ## Installation
 
@@ -210,6 +217,67 @@ btg-devops analyze resourcegroup --subscription-id xxx
 
 # JSON output
 btg-devops analyze resourcegroup --output json
+```
+
+---
+
+## Power Platform Commands
+
+> **Setup required** — see [docs/013-powerplatform-setup.md](docs/013-powerplatform-setup.md) for SP registration and `New-PowerAppManagementApp` steps.
+
+All Power Platform commands use `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET`.
+
+### Analyze Power Platform License Usage
+
+```bash
+# Scan all Power Platform license SKUs for unused seats and cost waste
+btg-devops analyze powerplatform
+
+# JSON output
+btg-devops analyze powerplatform --output json
+
+# Override tenant ID
+btg-devops analyze powerplatform --tenant-id <tenant-id>
+```
+
+### Analyze Power Platform Environments
+
+```bash
+# Check all environments for DLP policies, trial envs, governance issues
+btg-devops analyze pp-environments
+
+# JSON output
+btg-devops analyze pp-environments --output json
+```
+
+### Analyze Power Apps
+
+```bash
+# Scan all Power Apps across all environments
+btg-devops analyze pp-apps
+
+# JSON output
+btg-devops analyze pp-apps --output json
+```
+
+### Analyze Power Automate Flows
+
+```bash
+# Scan all flows for suspended, risky connectors, stale, orphaned
+btg-devops analyze pp-flows
+
+# JSON output
+btg-devops analyze pp-flows --output json
+```
+
+### Analyze Power BI Workspaces
+
+```bash
+# Check all workspaces for orphaned, empty, capacity issues
+btg-devops analyze pp-powerbi
+
+# JSON output
+btg-devops analyze pp-powerbi --output json
 ```
 
 ### Output (App Service Traffic)

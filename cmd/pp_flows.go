@@ -50,16 +50,34 @@ type ppFlow struct {
 }
 
 type ppFlowProps struct {
-	DisplayName      string        `json:"displayName"`
-	State            string        `json:"state"`
-	CreatedTime      string        `json:"createdTime"`
-	LastModifiedTime string        `json:"lastModifiedTime"`
-	Creator          ppFlowCreator `json:"creator"`
+	DisplayName       string              `json:"displayName"`
+	State             string              `json:"state"`
+	CreatedTime       string              `json:"createdTime"`
+	LastModifiedTime  string              `json:"lastModifiedTime"`
+	Creator           ppFlowCreator       `json:"creator"`
+	DefinitionSummary ppFlowDefSummary    `json:"definitionSummary"`
 }
 
 type ppFlowCreator struct {
 	UserDisplayName string `json:"userDisplayName"`
 	Email           string `json:"email"`
+}
+
+// PP-6: Definition summary contains trigger and action connector information
+type ppFlowDefSummary struct {
+	Triggers []ppFlowAction `json:"triggers"`
+	Actions  []ppFlowAction `json:"actions"`
+}
+
+type ppFlowAction struct {
+	Type    string        `json:"type"`
+	API     ppFlowConnAPI `json:"api"`
+}
+
+type ppFlowConnAPI struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	ID          string `json:"id"`
 }
 
 // ---------- command ----------
@@ -241,6 +259,44 @@ func runPPFlows(cmd *cobra.Command, args []string) error {
 					Description:    fmt.Sprintf("'%s' has no identifiable owner — may be orphaned", flowName),
 					Recommendation: "Identify ownership and reassign, or delete if the original owner has left.",
 				})
+			}
+
+			// PP-6: Risky connector detection — check all actions in this flow
+			allActions := append(flow.Properties.DefinitionSummary.Triggers, flow.Properties.DefinitionSummary.Actions...)
+			seenConnectors := map[string]bool{}
+			for _, action := range allActions {
+				apiName := strings.ToLower(action.API.Name)
+				if apiName == "" {
+					continue
+				}
+				if seenConnectors[apiName] {
+					continue
+				}
+				seenConnectors[apiName] = true
+
+				if reason, ok := ppHighRiskConnectors[apiName]; ok {
+					findings = append(findings, PPFlowFinding{
+						Severity:       Critical,
+						Category:       "High-Risk Connector",
+						FlowName:       flowName,
+						Environment:    envName,
+						State:          state,
+						Owner:          owner,
+						Description:    fmt.Sprintf("Uses %s", reason),
+						Recommendation: fmt.Sprintf("Review whether '%s' needs the %s connector — block it in DLP policy if not required.", flowName, action.API.DisplayName),
+					})
+				} else if reason, ok := ppWarnConnectors[apiName]; ok {
+					findings = append(findings, PPFlowFinding{
+						Severity:       Warning,
+						Category:       "Broad-Access Connector",
+						FlowName:       flowName,
+						Environment:    envName,
+						State:          state,
+						Owner:          owner,
+						Description:    fmt.Sprintf("Uses %s", reason),
+						Recommendation: fmt.Sprintf("Verify '%s' has appropriate data access scope for the %s connector.", flowName, action.API.DisplayName),
+					})
+				}
 			}
 		}
 	}
