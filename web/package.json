@@ -1,0 +1,26 @@
+{
+  "name": "btg-devops-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@types/nodemailer": "^8.0.1",
+    "next": "14.2.5",
+    "nodemailer": "^9.0.3",
+    "react": "^18",
+    "react-dom": "^18",
+    "recharts": "^2.12.7",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@types/uuid": "^9.0.8",
+    "typescript": "^5"
+  }
+}

@@ -18,19 +18,19 @@ import (
 // This keeps a single credential set for the whole tool and matches the existing
 // Service Principal auth pattern in btg-devops.
 //
-//   AZURE_TENANT_ID      → getTenantID()  — used by all pp-* commands
-//   AZURE_CLIENT_ID      → DefaultAzureCredential (implicit)
-//   AZURE_CLIENT_SECRET  → DefaultAzureCredential (implicit)
-//   AZURE_SUBSCRIPTION_ID → getSubscriptionID() — Azure commands only
+//	AZURE_TENANT_ID      → getTenantID()  — used by all pp-* commands
+//	AZURE_CLIENT_ID      → DefaultAzureCredential (implicit)
+//	AZURE_CLIENT_SECRET  → DefaultAzureCredential (implicit)
+//	AZURE_SUBSCRIPTION_ID → getSubscriptionID() — Azure commands only
 //
 // Power Platform API base URLs and OAuth scopes.
 //
 // Authentication requirements:
 //   - The service principal must be registered as a Power Platform management app
 //     by a Global Admin or Power Platform Admin running:
-//       Install-Module -Name Microsoft.PowerApps.Administration.PowerShell
-//       Add-PowerAppsAccount
-//       New-PowerAppManagementApp -ApplicationId <AZURE_CLIENT_ID>
+//     Install-Module -Name Microsoft.PowerApps.Administration.PowerShell
+//     Add-PowerAppsAccount
+//     New-PowerAppManagementApp -ApplicationId <AZURE_CLIENT_ID>
 //
 // Required Entra ID roles on the service principal:
 //   - Power Platform Administrator  → pp-environments, pp-apps, pp-flows
@@ -38,11 +38,12 @@ import (
 //   - (Graph) Organization.Read.All  → powerplatform (licensing)
 //
 // Token scopes per command:
-//   pp-environments : ppAppsScope  (BAP API — api.bap.microsoft.com)
-//   pp-apps         : ppAppsScope  (Power Apps Admin API — api.powerapps.com)
-//   pp-flows        : ppFlowScope  (Power Automate Admin API — api.flow.microsoft.com)
-//   pp-powerbi      : ppBIScope    (Power BI Admin API — api.powerbi.com)
-//   powerplatform   : graph scope  (Microsoft Graph — graph.microsoft.com)
+//
+//	pp-environments : ppAppsScope  (BAP API — api.bap.microsoft.com)
+//	pp-apps         : ppAppsScope  (Power Apps Admin API — api.powerapps.com)
+//	pp-flows        : ppFlowScope  (Power Automate Admin API — api.flow.microsoft.com)
+//	pp-powerbi      : ppBIScope    (Power BI Admin API — api.powerbi.com)
+//	powerplatform   : graph scope  (Microsoft Graph — graph.microsoft.com)
 const (
 	ppAppsScope = "https://service.powerapps.com/.default"
 	ppFlowScope = "https://service.flow.microsoft.com/.default"
@@ -84,26 +85,48 @@ type PPBaseFinding struct {
 // ppHighRiskConnectors maps connector API name → human reason.
 // These connectors are flagged Critical when found in a running flow.
 var ppHighRiskConnectors = map[string]string{
-	"shared_http":             "HTTP — can POST data to any external URL (data exfiltration risk)",
-	"shared_httpwithazuread":  "HTTP with Azure AD — authenticated outbound HTTP to arbitrary endpoints",
-	"shared_ftp":              "FTP — insecure file transfer, plaintext credentials in transit",
-	"shared_sftp":             "SFTP — external file transfer, verify destination is authorised",
-	"shared_smtp":             "SMTP — can send email from any address (phishing/spam risk)",
+	"shared_http":            "HTTP — can POST data to any external URL (data exfiltration risk)",
+	"shared_httpwithazuread": "HTTP with Azure AD — authenticated outbound HTTP to arbitrary endpoints",
+	"shared_ftp":             "FTP — insecure file transfer, plaintext credentials in transit",
+	"shared_sftp":            "SFTP — external file transfer, verify destination is authorised",
+	"shared_smtp":            "SMTP — can send email from any address (phishing/spam risk)",
 }
 
 // ppWarnConnectors maps connector API name → human reason.
 // These connectors are flagged Warning — legitimate but broad data access.
 var ppWarnConnectors = map[string]string{
-	"shared_azureblob":              "Azure Blob Storage — broad cloud storage read/write",
-	"shared_sql":                    "SQL Server — direct database access",
-	"shared_sharepointonline":        "SharePoint Online — broad document and list access",
-	"shared_commondataservice":       "Dataverse — full organisation data access",
+	"shared_azureblob":                "Azure Blob Storage — broad cloud storage read/write",
+	"shared_sql":                      "SQL Server — direct database access",
+	"shared_sharepointonline":         "SharePoint Online — broad document and list access",
+	"shared_commondataservice":        "Dataverse — full organisation data access",
 	"shared_commondataserviceforapps": "Dataverse for Apps — full organisation data access",
-	"shared_onedriveforbusiness":     "OneDrive for Business — broad file access",
-	"shared_office365":               "Office 365 Outlook — email read/send access",
+	"shared_onedriveforbusiness":      "OneDrive for Business — broad file access",
+	"shared_office365":                "Office 365 Outlook — email read/send access",
+}
+
+// ppPremiumConnectors maps connector API name → friendly name.
+// Best-effort, non-exhaustive list of Microsoft's publicly documented "Premium" tier
+// connectors (see https://learn.microsoft.com/connectors/). Flags flows using a
+// premium connector so licensing can be verified — not yet validated against live
+// flow data; expand/correct this list once real tenant data is available to check against.
+var ppPremiumConnectors = map[string]string{
+	"shared_sql":                  "SQL Server",
+	"shared_salesforce":           "Salesforce",
+	"shared_oracledatabase":       "Oracle Database",
+	"shared_workday":              "Workday",
+	"shared_service-now":          "ServiceNow",
+	"shared_mysql":                "MySQL",
+	"shared_db2":                  "IBM DB2",
+	"shared_informix":             "Informix",
+	"shared_sapapplicationserver": "SAP Application Server",
+	"shared_saperp":               "SAP ERP",
 }
 
 // ---------- HTTP helpers ----------
+
+// ppHTTPClient has an explicit timeout so a hanging/unresponsive endpoint (e.g. an
+// unverified API guess) fails fast with an error instead of blocking a scan indefinitely.
+var ppHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // ppFetch makes an authenticated GET request and unmarshals the JSON response.
 func ppFetch(ctx context.Context, token, url string, out interface{}) error {
@@ -114,7 +137,7 @@ func ppFetch(ctx context.Context, token, url string, out interface{}) error {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := ppHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -180,15 +203,15 @@ type ppEnvironment struct {
 }
 
 type ppEnvironmentProps struct {
-	DisplayName               string        `json:"displayName"`
-	EnvironmentSku            string        `json:"environmentSku"`
-	IsDefault                 bool          `json:"isDefault"`
-	IsDisabled                bool          `json:"isDisabled"`
-	ProvisioningState         string        `json:"provisioningState"`
-	CreatedTime               string        `json:"createdTime"`
-	LastModifiedTime          string        `json:"lastModifiedTime"`
-	ExpirationTime            *string       `json:"expirationTime"`
-	EnvironmentPolicies       ppEnvPolicies `json:"environmentPolicies"`
+	DisplayName               string           `json:"displayName"`
+	EnvironmentSku            string           `json:"environmentSku"`
+	IsDefault                 bool             `json:"isDefault"`
+	IsDisabled                bool             `json:"isDisabled"`
+	ProvisioningState         string           `json:"provisioningState"`
+	CreatedTime               string           `json:"createdTime"`
+	LastModifiedTime          string           `json:"lastModifiedTime"`
+	ExpirationTime            *string          `json:"expirationTime"`
+	EnvironmentPolicies       ppEnvPolicies    `json:"environmentPolicies"`
 	LinkedEnvironmentMetadata *ppLinkedEnvMeta `json:"linkedEnvironmentMetadata"`
 }
 
@@ -220,16 +243,16 @@ type ppDLPPolicy struct {
 }
 
 type ppDLPPolicyProps struct {
-	DisplayName                    string             `json:"displayName"`
-	DefaultConnectorsClassification string            `json:"defaultConnectorsClassification"`
-	ConnectorGroups                []ppConnectorGroup `json:"connectorGroups"`
-	Environments                   []ppDLPEnvRef      `json:"environments"`
-	FilterType                     string             `json:"filterType"`
+	DisplayName                     string             `json:"displayName"`
+	DefaultConnectorsClassification string             `json:"defaultConnectorsClassification"`
+	ConnectorGroups                 []ppConnectorGroup `json:"connectorGroups"`
+	Environments                    []ppDLPEnvRef      `json:"environments"`
+	FilterType                      string             `json:"filterType"`
 }
 
 type ppConnectorGroup struct {
-	Classification string         `json:"classification"`
-	Connectors     []ppConnector  `json:"connectors"`
+	Classification string        `json:"classification"`
+	Connectors     []ppConnector `json:"connectors"`
 }
 
 type ppConnector struct {
@@ -245,7 +268,7 @@ type ppDLPEnvRef struct {
 // fetchPPEnvironments retrieves all Power Platform environments for the tenant.
 func fetchPPEnvironments(ctx context.Context, token string) ([]ppEnvironment, error) {
 	var all []ppEnvironment
-	url := ppBAPBase + "/providers/Microsoft.BusinessAppPlatform/environments?api-version=2016-11-01"
+	url := ppBAPBase + "/providers/Microsoft.BusinessAppPlatform/scopes/admin/environments?api-version=2016-11-01"
 	for url != "" {
 		var page ppEnvsResponse
 		if err := ppFetch(ctx, token, url, &page); err != nil {

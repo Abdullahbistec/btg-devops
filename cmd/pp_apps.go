@@ -25,9 +25,12 @@ type PPAppFinding struct {
 }
 
 type PPAppSummary struct {
-	TotalApps          int            `json:"total_apps"`
-	TotalEnvironments  int            `json:"total_environments"`
-	FindingsBySeverity map[string]int `json:"findings_by_severity"`
+	TotalApps           int            `json:"total_apps"`
+	TotalEnvironments   int            `json:"total_environments"`
+	PremiumApps         int            `json:"premium_apps"`
+	CustomConnectorApps int            `json:"custom_connector_apps"`
+	OrphanedApps        int            `json:"orphaned_apps"`
+	FindingsBySeverity  map[string]int `json:"findings_by_severity"`
 }
 
 type PPAppReport struct {
@@ -76,8 +79,13 @@ var ppAppsCmd = &cobra.Command{
   - Apps not modified in 180+ days (stale candidates for deletion)
   - Apps deployed in the Default environment (governance risk)
   - Apps using premium connectors without a description (undocumented cost)
-  - Apps shared with large numbers of users
+  - Apps shared with large numbers of users or security groups
   - Apps with no description (undiscoverable / ungoverned)
+  - Apps using custom connectors (bypass DLP connector blocking rules)
+  - Orphaned apps with no owner that are shared or use premium licences
+  - Apps with unpublished changes (users see an older version)
+
+Inventory: reports totals for premium apps, custom-connector apps, and orphaned apps.
 
 Requires: Power Platform Administrator role on the service principal.`,
 	RunE: runPPApps,
@@ -144,6 +152,17 @@ func runPPApps(cmd *cobra.Command, args []string) error {
 				owner = "(unknown)"
 			}
 			daysSinceMod := ppDaysSince(app.Properties.LastModifiedTime)
+
+			// inventory counters
+			if app.Properties.UsesPremiumApi {
+				summary.PremiumApps++
+			}
+			if app.Properties.UsesCustomApi {
+				summary.CustomConnectorApps++
+			}
+			if owner == "(unknown)" {
+				summary.OrphanedApps++
+			}
 
 			// 1. Stale app — not modified in 180+ days
 			if daysSinceMod >= 365 {
@@ -229,6 +248,71 @@ func runPPApps(cmd *cobra.Command, args []string) error {
 					Recommendation: "Confirm that the sharing scope is intentional and appropriate.",
 				})
 			}
+
+			// 6. Custom connector — bypasses the DLP connector catalogue
+			if app.Properties.UsesCustomApi {
+				findings = append(findings, PPAppFinding{
+					Severity:       Warning,
+					Category:       "Custom Connector",
+					AppName:        appName,
+					Environment:    envName,
+					Owner:          owner,
+					Description:    "Uses a custom (non-Microsoft) connector — custom connectors are not subject to DLP connector blocking rules",
+					Recommendation: "Review the custom connector definition, verify the target endpoint is authorised, and add it to the appropriate DLP connector group.",
+				})
+			}
+
+			// 7. Orphaned app — no identifiable owner but is shared or costs premium licences
+			if owner == "(unknown)" && (app.Properties.SharedUsersCount > 0 || app.Properties.UsesPremiumApi) {
+				findings = append(findings, PPAppFinding{
+					Severity:       Critical,
+					Category:       "Orphaned App",
+					AppName:        appName,
+					Environment:    envName,
+					Owner:          owner,
+					Description:    fmt.Sprintf("No identifiable owner; shared with %d users, premium: %v", app.Properties.SharedUsersCount, app.Properties.UsesPremiumApi),
+					Recommendation: "Assign an owner or delete the app. Unowned premium apps accrue licensing costs with no accountability.",
+				})
+			}
+
+			// 8. Unpublished changes — editor has saved but users still see the old version
+			if app.Properties.LastPublishTime != "" {
+				daysSincePub := ppDaysSince(app.Properties.LastPublishTime)
+				if daysSincePub >= 0 && daysSinceMod >= 0 && daysSincePub > daysSinceMod+30 {
+					findings = append(findings, PPAppFinding{
+						Severity:       Info,
+						Category:       "Unpublished Changes",
+						AppName:        appName,
+						Environment:    envName,
+						Owner:          owner,
+						Description:    fmt.Sprintf("Modified %d days ago but last published %d days ago — users see an older version", daysSinceMod, daysSincePub),
+						Recommendation: "Publish the latest version so users benefit from the most recent changes.",
+					})
+				}
+			}
+
+			// 9. Wide group sharing — shared with many security groups
+			if app.Properties.SharedGroupsCount > 5 {
+				findings = append(findings, PPAppFinding{
+					Severity:       Warning,
+					Category:       "Wide Group Sharing",
+					AppName:        appName,
+					Environment:    envName,
+					Owner:          owner,
+					Description:    fmt.Sprintf("Shared with %d security groups — access may exceed intended audience", app.Properties.SharedGroupsCount),
+					Recommendation: "Review group membership to ensure only intended users can access this app.",
+				})
+			} else if app.Properties.SharedGroupsCount > 2 {
+				findings = append(findings, PPAppFinding{
+					Severity:       Info,
+					Category:       "Wide Group Sharing",
+					AppName:        appName,
+					Environment:    envName,
+					Owner:          owner,
+					Description:    fmt.Sprintf("Shared with %d security groups", app.Properties.SharedGroupsCount),
+					Recommendation: "Confirm that all groups require access to this app.",
+				})
+			}
 		}
 	}
 
@@ -272,8 +356,11 @@ func printPPAppsTable(r PPAppReport) {
 
 	fmt.Println("SUMMARY")
 	fmt.Println(strings.Repeat("-", 50))
-	fmt.Printf("  Environments Scanned: %d\n", r.Summary.TotalEnvironments)
-	fmt.Printf("  Total Apps Found:     %d\n", r.Summary.TotalApps)
+	fmt.Printf("  Environments Scanned:    %d\n", r.Summary.TotalEnvironments)
+	fmt.Printf("  Total Apps Found:        %d\n", r.Summary.TotalApps)
+	fmt.Printf("  Premium Apps:            %d\n", r.Summary.PremiumApps)
+	fmt.Printf("  Custom Connector Apps:   %d\n", r.Summary.CustomConnectorApps)
+	fmt.Printf("  Orphaned Apps (no owner):%d\n", r.Summary.OrphanedApps)
 	fmt.Println()
 
 	fmt.Println("FINDINGS")

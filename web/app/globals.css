@@ -1,0 +1,163 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+select { color-scheme: dark; }
+select option {
+  background: #0b1030;
+  color: #E8ECF8;
+}
+
+@media print {
+  body { background: #fff !important; color: #111 !important; }
+  aside, header button, nav { display: none !important; }
+  main { overflow: visible !important; padding: 16px !important; }
+}
+
+:root {
+  --bg:       #050818;
+  --sb:       rgba(5, 9, 26, 0.45);
+  --card:     rgba(255, 255, 255, 0);
+  --card2:    rgba(255, 255, 255, 0.06);
+  --border:   rgba(255, 255, 255, 0.30);
+  --accent:   #00C2FF;
+  --accent2:  #7B5EA7;
+  --text:     #E8ECF8;
+  --muted:    #A0AECF;
+  --dim:      #4A5580;
+  --crit:     #FF4757;
+  --warn:     #FFA502;
+  --good:     #2ED573;
+  --info:     #54A0FF;
+}
+
+/* ── Ambient background orbs ─────────────────────────────────── */
+html {
+  height: 100%;
+  background:
+    radial-gradient(ellipse 900px 700px at 8%   5%,  rgba(0, 194, 255, 0.22) 0%, transparent 60%),
+    radial-gradient(ellipse 700px 800px at 92%  92%, rgba(123, 94, 167, 0.28) 0%, transparent 60%),
+    radial-gradient(ellipse 600px 500px at 55%  45%, rgba(0,  184, 148, 0.10) 0%, transparent 60%),
+    #050818;
+}
+
+body {
+  height: 100%;
+  background: transparent;
+  color: var(--text);
+  font-family: 'Segoe UI', -apple-system, system-ui, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* ── Glass — dark mode (default) ────────────────────────────── */
+.glass {
+  position:                relative;
+  z-index:                 1;
+  background:              rgba(255, 255, 255, 0.06) !important;
+  backdrop-filter:         blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border:                  1px solid rgba(255, 255, 255, 0.15); /* no !important — inline colored borders win */
+  border-radius:           16px;
+  box-shadow:              0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255,255,255,0.1);
+}
+
+.glass-sb {
+  background:              rgba(255, 255, 255, 0.04) !important;
+  backdrop-filter:         blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border-right:            1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:              4px 0 32px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Tab pills — dark mode (default) ────────────────────────── */
+.tab-pill {
+  background:              rgba(255, 255, 255, 0.10);
+  backdrop-filter:         blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  border:                  1px solid rgba(255, 255, 255, 0.22);
+  border-radius:           999px;
+  box-shadow:              0 2px 12px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255,255,255,0.18);
+  transition:              all 0.18s ease;
+}
+
+/* ── Light theme overrides ───────────────────────────────────── */
+:root[data-theme="light"] {
+  --bg:      #EDF1FF;
+  --sb:      rgba(215, 225, 255, 0.82);
+  --card:    rgba(255, 255, 255, 0.39);
+  --card2:   rgba(235, 242, 255, 0.82);
+  --border:  rgba(255, 255, 255, 0.30);
+  --accent:  #0094CC;
+  --accent2: #6B4F9A;
+  --text:    #0D1533;
+  --muted:   #445580;
+  --dim:     #8892CC;
+  --crit:    #D63040;
+  --warn:    #CC7A00;
+  --good:    #1A9E50;
+  --info:    #1A6ECC;
+}
+html[data-theme="light"] {
+  background:
+    radial-gradient(ellipse 900px 700px at 8%   5%,  rgba(0, 194, 255, 0.10) 0%, transparent 60%),
+    radial-gradient(ellipse 700px 800px at 92%  92%, rgba(123, 94, 167, 0.12) 0%, transparent 60%),
+    radial-gradient(ellipse 600px 500px at 55%  45%, rgba(0, 184, 148, 0.05) 0%, transparent 60%),
+    #EDF1FF;
+}
+
+[data-theme="light"] .glass {
+  background:              rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter:         blur(20px) saturate(200%);
+  -webkit-backdrop-filter: blur(20px) saturate(200%);
+  /* border NOT overridden here — inline colored borders take effect */
+  box-shadow:              0 4px 20px rgba(80, 100, 180, 0.10), 0 1px 4px rgba(0,0,0,0.05), inset 0 1px 0 rgba(255,255,255,0.95);
+}
+
+[data-theme="light"] .glass-sb {
+  background:              rgba(225, 232, 255, 0.82) !important;
+  backdrop-filter:         blur(20px) saturate(200%);
+  -webkit-backdrop-filter: blur(20px) saturate(200%);
+  border-right:            1px solid rgba(150, 170, 230, 0.30);
+  box-shadow:              4px 0 20px rgba(80, 100, 180, 0.08);
+}
+
+[data-theme="light"] .tab-pill {
+  /* tab pills handled by inline styles — no override needed */
+}
+
+/* ── Light mode chart tooltips ───────────────────────────────── */
+[data-theme="light"] .recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border:     1px solid rgba(100, 130, 210, 0.25) !important;
+  color:      #0D1533 !important;
+  box-shadow: 0 4px 16px rgba(80, 100, 180, 0.12) !important;
+}
+[data-theme="light"] .recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-label {
+  color: #0D1533 !important;
+}
+[data-theme="light"] .recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-item {
+  color: #445580 !important;
+}
+
+/* ── Light mode recharts axis/grid text ─────────────────────── */
+[data-theme="light"] .recharts-cartesian-axis-tick text {
+  fill: #445580 !important;
+}
+[data-theme="light"] .recharts-legend-item-text {
+  color: #445580 !important;
+}
+
+/* ── Scrollbars ──────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0, 194, 255, 0.25); border-radius: 2px; }
+
+button { font-family: inherit; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+
+/* ── Print styles (Reports PDF) ─────────────────────────── */
+@media print {
+  body { background: #fff !important; color: #000 !important; }
+  .no-print { display: none !important; }
+  .glass, .glass-sb { background: #fff !important; border: 1px solid #ddd !important; box-shadow: none !important; backdrop-filter: none !important; }
+  * { color-adjust: exact; -webkit-print-color-adjust: exact; }
+}

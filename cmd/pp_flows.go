@@ -44,18 +44,18 @@ type ppFlowsResponse struct {
 }
 
 type ppFlow struct {
-	Name       string       `json:"name"`
-	ID         string       `json:"id"`
-	Properties ppFlowProps  `json:"properties"`
+	Name       string      `json:"name"`
+	ID         string      `json:"id"`
+	Properties ppFlowProps `json:"properties"`
 }
 
 type ppFlowProps struct {
-	DisplayName       string              `json:"displayName"`
-	State             string              `json:"state"`
-	CreatedTime       string              `json:"createdTime"`
-	LastModifiedTime  string              `json:"lastModifiedTime"`
-	Creator           ppFlowCreator       `json:"creator"`
-	DefinitionSummary ppFlowDefSummary    `json:"definitionSummary"`
+	DisplayName       string           `json:"displayName"`
+	State             string           `json:"state"`
+	CreatedTime       string           `json:"createdTime"`
+	LastModifiedTime  string           `json:"lastModifiedTime"`
+	Creator           ppFlowCreator    `json:"creator"`
+	DefinitionSummary ppFlowDefSummary `json:"definitionSummary"`
 }
 
 type ppFlowCreator struct {
@@ -70,14 +70,55 @@ type ppFlowDefSummary struct {
 }
 
 type ppFlowAction struct {
-	Type    string        `json:"type"`
-	API     ppFlowConnAPI `json:"api"`
+	Type string        `json:"type"`
+	API  ppFlowConnAPI `json:"api"`
 }
 
 type ppFlowConnAPI struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName"`
 	ID          string `json:"id"`
+}
+
+// Single-flow detail response — the V1 "get" action (not the deprecated "list"
+// action) still returns connectionReferences, keyed by connector API name
+// (e.g. "shared_sql"), which the V2 list response omits.
+type ppFlowDetailResponse struct {
+	Properties ppFlowDetailProps `json:"properties"`
+}
+
+type ppFlowDetailProps struct {
+	ConnectionReferences map[string]json.RawMessage `json:"connectionReferences"`
+}
+
+// fetchFlowConnectors returns the connector API names (e.g. "shared_sql") used by
+// a single flow, via the V1 single-flow get action.
+func fetchFlowConnectors(ctx context.Context, token, envName, flowName string) ([]string, error) {
+	url := fmt.Sprintf("%s/providers/Microsoft.ProcessSimple/scopes/admin/environments/%s/flows/%s?api-version=2016-11-01",
+		ppFlowBase, envName, flowName)
+	var detail ppFlowDetailResponse
+	if err := ppFetch(ctx, token, url, &detail); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(detail.Properties.ConnectionReferences))
+	for name := range detail.Properties.ConnectionReferences {
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// Flow permissions API types — best-effort, unverified against live data (see
+// fetchFlowPermissions).
+type ppFlowPermissionsResponse struct {
+	Value []ppFlowPermission `json:"value"`
+}
+
+type ppFlowPermission struct {
+	Properties ppFlowPermissionProps `json:"properties"`
+}
+
+type ppFlowPermissionProps struct {
+	RoleName string `json:"roleName"`
 }
 
 // ---------- command ----------
@@ -146,6 +187,11 @@ func runPPFlows(cmd *cobra.Command, args []string) error {
 		FindingsBySeverity: map[string]int{},
 	}
 	var findings []PPFlowFinding
+
+	// Broad-sharing check (below) is best-effort: the exact admin API shape for flow
+	// permissions hasn't been validated against live data. It disables itself for the
+	// rest of the run on the first failure rather than erroring out the whole scan.
+	sharingCheckEnabled := true
 
 	for _, env := range envs {
 		envName := ppEnvDisplayName(env)
@@ -261,18 +307,57 @@ func runPPFlows(cmd *cobra.Command, args []string) error {
 				})
 			}
 
-			// PP-6: Risky connector detection — check all actions in this flow
-			allActions := append(flow.Properties.DefinitionSummary.Triggers, flow.Properties.DefinitionSummary.Actions...)
-			seenConnectors := map[string]bool{}
-			for _, action := range allActions {
-				apiName := strings.ToLower(action.API.Name)
+			// 6. Broad sharing — best-effort (see sharingCheckEnabled comment above)
+			if sharingCheckEnabled && strings.EqualFold(state, "Started") {
+				perms, permErr := fetchFlowPermissions(ctx, flowToken, env.Name, flow.Name)
+				if permErr != nil {
+					sharingCheckEnabled = false
+					fmt.Fprintf(os.Stderr, "  Note: flow sharing data unavailable, skipping broad-sharing check (%v)\n", permErr)
+				} else {
+					sharedCount := 0
+					for _, p := range perms {
+						if !strings.EqualFold(p.Properties.RoleName, "Owner") {
+							sharedCount++
+						}
+					}
+					if sharedCount >= 10 {
+						findings = append(findings, PPFlowFinding{
+							Severity:       Warning,
+							Category:       "Broadly Shared Flow",
+							FlowName:       flowName,
+							Environment:    envName,
+							State:          state,
+							Owner:          owner,
+							Description:    fmt.Sprintf("Shared with %d users/groups beyond the owner", sharedCount),
+							Recommendation: "Review sharing settings — if the owner leaves, everyone it's shared with loses access to this flow.",
+						})
+					} else if sharedCount >= 3 {
+						findings = append(findings, PPFlowFinding{
+							Severity:       Info,
+							Category:       "Broadly Shared Flow",
+							FlowName:       flowName,
+							Environment:    envName,
+							State:          state,
+							Owner:          owner,
+							Description:    fmt.Sprintf("Shared with %d users/groups beyond the owner", sharedCount),
+							Recommendation: "Confirm the sharing scope is intentional.",
+						})
+					}
+				}
+			}
+
+			// PP-6: Risky connector detection. The V2 flows list (used above, since the
+			// V1 list-with-definition action is deprecated) doesn't include connector
+			// data, so fetch each flow's connectionReferences individually.
+			connectors, connErr := fetchFlowConnectors(ctx, flowToken, env.Name, flow.Name)
+			if connErr != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: could not fetch connectors for '%s': %v\n", flowName, connErr)
+			}
+			for _, apiNameRaw := range connectors {
+				apiName := strings.ToLower(apiNameRaw)
 				if apiName == "" {
 					continue
 				}
-				if seenConnectors[apiName] {
-					continue
-				}
-				seenConnectors[apiName] = true
 
 				if reason, ok := ppHighRiskConnectors[apiName]; ok {
 					findings = append(findings, PPFlowFinding{
@@ -283,7 +368,7 @@ func runPPFlows(cmd *cobra.Command, args []string) error {
 						State:          state,
 						Owner:          owner,
 						Description:    fmt.Sprintf("Uses %s", reason),
-						Recommendation: fmt.Sprintf("Review whether '%s' needs the %s connector — block it in DLP policy if not required.", flowName, action.API.DisplayName),
+						Recommendation: fmt.Sprintf("Review whether '%s' needs the %s connector — block it in DLP policy if not required.", flowName, apiNameRaw),
 					})
 				} else if reason, ok := ppWarnConnectors[apiName]; ok {
 					findings = append(findings, PPFlowFinding{
@@ -294,7 +379,21 @@ func runPPFlows(cmd *cobra.Command, args []string) error {
 						State:          state,
 						Owner:          owner,
 						Description:    fmt.Sprintf("Uses %s", reason),
-						Recommendation: fmt.Sprintf("Verify '%s' has appropriate data access scope for the %s connector.", flowName, action.API.DisplayName),
+						Recommendation: fmt.Sprintf("Verify '%s' has appropriate data access scope for the %s connector.", flowName, apiNameRaw),
+					})
+				}
+
+				// 7. Premium connector — undocumented licensing cost
+				if friendlyConn, ok := ppPremiumConnectors[apiName]; ok {
+					findings = append(findings, PPFlowFinding{
+						Severity:       Info,
+						Category:       "Premium Connector — Verify Licensing",
+						FlowName:       flowName,
+						Environment:    envName,
+						State:          state,
+						Owner:          owner,
+						Description:    fmt.Sprintf("Uses %s — requires a premium Power Automate license", friendlyConn),
+						Recommendation: fmt.Sprintf("Confirm '%s' and any users it's shared with have a premium license covering the %s connector.", flowName, apiNameRaw),
 					})
 				}
 			}
@@ -320,7 +419,7 @@ func runPPFlows(cmd *cobra.Command, args []string) error {
 
 func fetchPPFlows(ctx context.Context, token, envName string) ([]ppFlow, error) {
 	var all []ppFlow
-	url := fmt.Sprintf("%s/providers/Microsoft.ProcessSimple/scopes/admin/environments/%s/flows?api-version=2016-11-01",
+	url := fmt.Sprintf("%s/providers/Microsoft.ProcessSimple/scopes/admin/environments/%s/v2/flows?api-version=2016-11-01",
 		ppFlowBase, envName)
 	for url != "" {
 		var page ppFlowsResponse
@@ -331,6 +430,19 @@ func fetchPPFlows(ctx context.Context, token, envName string) ([]ppFlow, error) 
 		url = page.NextLink
 	}
 	return all, nil
+}
+
+// fetchFlowPermissions is best-effort — this exact admin API shape (GET .../permissions)
+// has not been validated against a live tenant. The caller disables the broad-sharing
+// check for the rest of the run on the first error rather than failing the whole scan.
+func fetchFlowPermissions(ctx context.Context, token, envName, flowName string) ([]ppFlowPermission, error) {
+	url := fmt.Sprintf("%s/providers/Microsoft.ProcessSimple/scopes/admin/environments/%s/flows/%s/permissions?api-version=2016-11-01",
+		ppFlowBase, envName, flowName)
+	var page ppFlowPermissionsResponse
+	if err := ppFetch(ctx, token, url, &page); err != nil {
+		return nil, err
+	}
+	return page.Value, nil
 }
 
 func printPPFlowsTable(r PPFlowReport) {

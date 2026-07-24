@@ -255,8 +255,9 @@ func runPowerPlatform(cmd *cobra.Command, args []string) error {
 			})
 		}
 
-		// 3. All seats unused (zero consumption)
-		if !isTrialSKU(sku.SKUPartNumber) && purchased > 0 && consumed == 0 {
+		// 3. All seats unused (zero consumption) — only when we know this SKU actually costs money;
+		// otherwise "$0/month wasted" is a fabricated cost claim (common for auto-granted/free-pool SKUs).
+		if !isTrialSKU(sku.SKUPartNumber) && purchased > 0 && consumed == 0 && costPerSeat > 0 {
 			findings = append(findings, PPFinding{
 				Severity:       Critical,
 				Category:       "Zero Usage",
@@ -268,7 +269,7 @@ func runPowerPlatform(cmd *cobra.Command, args []string) error {
 		}
 
 		// 4. Severe waste (>=80% unused, >=10 seats)
-		if !isTrialSKU(sku.SKUPartNumber) && consumed > 0 && unused >= 10 && unusedPct >= 80 {
+		if !isTrialSKU(sku.SKUPartNumber) && consumed > 0 && unused >= 10 && unusedPct >= 80 && costPerSeat > 0 {
 			findings = append(findings, PPFinding{
 				Severity:       Critical,
 				Category:       "Severe License Waste",
@@ -277,7 +278,7 @@ func runPowerPlatform(cmd *cobra.Command, args []string) error {
 				Description:    fmt.Sprintf("%s: %d of %d seats unused (%.0f%%) — est. $%.0f/month waste", friendlyName, unused, purchased, unusedPct, monthlyWaste),
 				Recommendation: fmt.Sprintf("Reduce %s from %d to %d seats to save ~$%.0f/month.", friendlyName, purchased, consumed, monthlyWaste),
 			})
-		} else if !isTrialSKU(sku.SKUPartNumber) && consumed > 0 && unused >= 5 && unusedPct >= 50 {
+		} else if !isTrialSKU(sku.SKUPartNumber) && consumed > 0 && unused >= 5 && unusedPct >= 50 && costPerSeat > 0 {
 			// 5. Moderate waste (>=50% unused, >=5 seats)
 			findings = append(findings, PPFinding{
 				Severity:       Warning,
