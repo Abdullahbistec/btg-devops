@@ -6,11 +6,18 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"text/tabwriter"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/spf13/cobra"
 )
+
+// flowConcurrency caps how many flows have their connector/owner/sharing details
+// fetched at once. Each flow needs 1-3 network calls; without a cap, hundreds of
+// flows would open hundreds of simultaneous connections.
+const flowConcurrency = 15
 
 // ---------- data types ----------
 
@@ -61,6 +68,7 @@ type ppFlowProps struct {
 type ppFlowCreator struct {
 	UserDisplayName string `json:"userDisplayName"`
 	Email           string `json:"email"`
+	ObjectId        string `json:"objectId"`
 }
 
 // PP-6: Definition summary contains trigger and action connector information
@@ -89,6 +97,62 @@ type ppFlowDetailResponse struct {
 
 type ppFlowDetailProps struct {
 	ConnectionReferences map[string]json.RawMessage `json:"connectionReferences"`
+}
+
+type ppGraphUser struct {
+	DisplayName       string `json:"displayName"`
+	Mail              string `json:"mail"`
+	UserPrincipalName string `json:"userPrincipalName"`
+}
+
+// ppOwnerCache is a mutex-guarded cache of resolved owner display names, safe for
+// concurrent use across the flow-enrichment worker pool.
+type ppOwnerCache struct {
+	mu sync.Mutex
+	m  map[string]string
+}
+
+func newPPOwnerCache() *ppOwnerCache {
+	return &ppOwnerCache{m: map[string]string{}}
+}
+
+func (c *ppOwnerCache) get(key string) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.m[key]
+	return v, ok
+}
+
+func (c *ppOwnerCache) set(key, value string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m[key] = value
+}
+
+// resolveGraphUserDisplay looks up a flow creator's email/display name from their
+// Azure AD object ID via Microsoft Graph, since the Power Automate API only exposes
+// the object ID. Results are cached per run to avoid repeat lookups for the same
+// creator across many flows. Returns "" (falls back to "(unknown)") on any failure —
+// a bad lookup shouldn't fail the whole scan.
+func resolveGraphUserDisplay(ctx context.Context, graphToken, objectId string, cache *ppOwnerCache) string {
+	if cached, ok := cache.get(objectId); ok {
+		return cached
+	}
+	url := fmt.Sprintf("https://graph.microsoft.com/v1.0/users/%s?$select=displayName,mail,userPrincipalName", objectId)
+	var user ppGraphUser
+	if err := ppFetch(ctx, graphToken, url, &user); err != nil {
+		cache.set(objectId, "")
+		return ""
+	}
+	display := user.Mail
+	if display == "" {
+		display = user.UserPrincipalName
+	}
+	if display == "" {
+		display = user.DisplayName
+	}
+	cache.set(objectId, display)
+	return display
 }
 
 // fetchFlowConnectors returns the connector API names (e.g. "shared_sql") used by
@@ -173,6 +237,12 @@ func runPPFlows(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("acquiring power platform token: %w", err)
 	}
 
+	// The flow creator only exposes an Azure AD object ID, not an email/display name —
+	// resolve it via Graph. Best-effort: if Graph auth fails, owner resolution just
+	// falls back to the raw object ID instead of failing the whole scan.
+	graphToken, graphErr := ppToken(ctx, cred, "https://graph.microsoft.com/.default")
+	ownerCache := newPPOwnerCache()
+
 	fmt.Fprintf(os.Stderr, "Fetching Power Platform environments...\n")
 	envs, err := fetchPPEnvironments(ctx, appsToken)
 	if err != nil {
@@ -188,10 +258,14 @@ func runPPFlows(cmd *cobra.Command, args []string) error {
 	}
 	var findings []PPFlowFinding
 
-	// Broad-sharing check (below) is best-effort: the exact admin API shape for flow
-	// permissions hasn't been validated against live data. It disables itself for the
-	// rest of the run on the first failure rather than erroring out the whole scan.
-	sharingCheckEnabled := true
+	// ---------- Phase 1: collect every flow across every environment ----------
+	type flowCtx struct {
+		flow      ppFlow
+		envName   string
+		envID     string
+		isDefault bool
+	}
+	var flatFlows []flowCtx
 
 	for _, env := range envs {
 		envName := ppEnvDisplayName(env)
@@ -202,8 +276,83 @@ func runPPFlows(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		summary.TotalFlows += len(flows)
-
 		for _, flow := range flows {
+			flatFlows = append(flatFlows, flowCtx{flow: flow, envName: envName, envID: env.Name, isDefault: env.Properties.IsDefault})
+		}
+	}
+
+	// ---------- Phase 2: fetch each flow's owner/connectors/sharing concurrently ----------
+	// Broad-sharing check is best-effort: the exact admin API shape for flow
+	// permissions hasn't been validated against live data. It disables itself for the
+	// rest of the run on the first failure rather than erroring out the whole scan.
+	var sharingCheckEnabled atomic.Bool
+	sharingCheckEnabled.Store(true)
+
+	type enrichment struct {
+		owner       string
+		connectors  []string
+		connErr     error
+		sharedCount int
+		sharingOK   bool
+	}
+	enrichments := make([]enrichment, len(flatFlows))
+
+	sem := make(chan struct{}, flowConcurrency)
+	var wg sync.WaitGroup
+	for i, fc := range flatFlows {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, fc flowCtx) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			flow := fc.flow
+			state := flow.Properties.State
+			var e enrichment
+
+			owner := flow.Properties.Creator.Email
+			if owner == "" {
+				owner = flow.Properties.Creator.UserDisplayName
+			}
+			if owner == "" && flow.Properties.Creator.ObjectId != "" && graphErr == nil {
+				owner = resolveGraphUserDisplay(ctx, graphToken, flow.Properties.Creator.ObjectId, ownerCache)
+			}
+			if owner == "" {
+				owner = "(unknown)"
+			}
+			e.owner = owner
+
+			if strings.EqualFold(state, "Started") {
+				connectors, connErr := fetchFlowConnectors(ctx, flowToken, fc.envID, flow.Name)
+				e.connectors, e.connErr = connectors, connErr
+
+				if sharingCheckEnabled.Load() {
+					perms, permErr := fetchFlowPermissions(ctx, flowToken, fc.envID, flow.Name)
+					if permErr != nil {
+						sharingCheckEnabled.Store(false)
+					} else {
+						e.sharingOK = true
+						for _, p := range perms {
+							if !strings.EqualFold(p.Properties.RoleName, "Owner") {
+								e.sharedCount++
+							}
+						}
+					}
+				}
+			}
+
+			enrichments[i] = e
+		}(i, fc)
+	}
+	wg.Wait()
+
+	// ---------- Phase 3: build findings sequentially from the fetched data ----------
+	for i, fc := range flatFlows {
+		flow := fc.flow
+		envName := fc.envName
+		enr := enrichments[i]
+
+		{
 			flowName := flow.Properties.DisplayName
 			if flowName == "" {
 				flowName = flow.Name
@@ -211,13 +360,7 @@ func runPPFlows(cmd *cobra.Command, args []string) error {
 			state := flow.Properties.State
 			summary.ByState[state]++
 
-			owner := flow.Properties.Creator.Email
-			if owner == "" {
-				owner = flow.Properties.Creator.UserDisplayName
-			}
-			if owner == "" {
-				owner = "(unknown)"
-			}
+			owner := enr.owner
 			daysSinceMod := ppDaysSince(flow.Properties.LastModifiedTime)
 
 			// 1. Suspended flow — platform stopped it (errors, quota)
@@ -280,7 +423,7 @@ func runPPFlows(cmd *cobra.Command, args []string) error {
 			}
 
 			// 4. Flow in Default environment
-			if env.Properties.IsDefault && strings.EqualFold(state, "Started") {
+			if fc.isDefault && strings.EqualFold(state, "Started") {
 				findings = append(findings, PPFlowFinding{
 					Severity:       Info,
 					Category:       "Flow in Default Environment",
@@ -307,53 +450,40 @@ func runPPFlows(cmd *cobra.Command, args []string) error {
 				})
 			}
 
-			// 6. Broad sharing — best-effort (see sharingCheckEnabled comment above)
-			if sharingCheckEnabled && strings.EqualFold(state, "Started") {
-				perms, permErr := fetchFlowPermissions(ctx, flowToken, env.Name, flow.Name)
-				if permErr != nil {
-					sharingCheckEnabled = false
-					fmt.Fprintf(os.Stderr, "  Note: flow sharing data unavailable, skipping broad-sharing check (%v)\n", permErr)
-				} else {
-					sharedCount := 0
-					for _, p := range perms {
-						if !strings.EqualFold(p.Properties.RoleName, "Owner") {
-							sharedCount++
-						}
-					}
-					if sharedCount >= 10 {
-						findings = append(findings, PPFlowFinding{
-							Severity:       Warning,
-							Category:       "Broadly Shared Flow",
-							FlowName:       flowName,
-							Environment:    envName,
-							State:          state,
-							Owner:          owner,
-							Description:    fmt.Sprintf("Shared with %d users/groups beyond the owner", sharedCount),
-							Recommendation: "Review sharing settings — if the owner leaves, everyone it's shared with loses access to this flow.",
-						})
-					} else if sharedCount >= 3 {
-						findings = append(findings, PPFlowFinding{
-							Severity:       Info,
-							Category:       "Broadly Shared Flow",
-							FlowName:       flowName,
-							Environment:    envName,
-							State:          state,
-							Owner:          owner,
-							Description:    fmt.Sprintf("Shared with %d users/groups beyond the owner", sharedCount),
-							Recommendation: "Confirm the sharing scope is intentional.",
-						})
-					}
+			// 6. Broad sharing — best-effort, fetched concurrently in Phase 2 above.
+			if enr.sharingOK {
+				if enr.sharedCount >= 10 {
+					findings = append(findings, PPFlowFinding{
+						Severity:       Warning,
+						Category:       "Broadly Shared Flow",
+						FlowName:       flowName,
+						Environment:    envName,
+						State:          state,
+						Owner:          owner,
+						Description:    fmt.Sprintf("Shared with %d users/groups beyond the owner", enr.sharedCount),
+						Recommendation: "Review sharing settings — if the owner leaves, everyone it's shared with loses access to this flow.",
+					})
+				} else if enr.sharedCount >= 3 {
+					findings = append(findings, PPFlowFinding{
+						Severity:       Info,
+						Category:       "Broadly Shared Flow",
+						FlowName:       flowName,
+						Environment:    envName,
+						State:          state,
+						Owner:          owner,
+						Description:    fmt.Sprintf("Shared with %d users/groups beyond the owner", enr.sharedCount),
+						Recommendation: "Confirm the sharing scope is intentional.",
+					})
 				}
 			}
 
 			// PP-6: Risky connector detection. The V2 flows list (used above, since the
 			// V1 list-with-definition action is deprecated) doesn't include connector
-			// data, so fetch each flow's connectionReferences individually.
-			connectors, connErr := fetchFlowConnectors(ctx, flowToken, env.Name, flow.Name)
-			if connErr != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: could not fetch connectors for '%s': %v\n", flowName, connErr)
+			// data, so each flow's connectionReferences were fetched concurrently above.
+			if enr.connErr != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: could not fetch connectors for '%s': %v\n", flowName, enr.connErr)
 			}
-			for _, apiNameRaw := range connectors {
+			for _, apiNameRaw := range enr.connectors {
 				apiName := strings.ToLower(apiNameRaw)
 				if apiName == "" {
 					continue

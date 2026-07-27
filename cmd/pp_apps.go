@@ -270,7 +270,7 @@ func runPPApps(cmd *cobra.Command, args []string) error {
 					AppName:        appName,
 					Environment:    envName,
 					Owner:          owner,
-					Description:    fmt.Sprintf("No identifiable owner; shared with %d users, premium: %v", app.Properties.SharedUsersCount, app.Properties.UsesPremiumApi),
+					Description:    orphanedAppDescription(app.Properties.SharedUsersCount, app.Properties.UsesPremiumApi),
 					Recommendation: "Assign an owner or delete the app. Unowned premium apps accrue licensing costs with no accountability.",
 				})
 			}
@@ -331,6 +331,19 @@ func runPPApps(cmd *cobra.Command, args []string) error {
 		printPPAppsTable(report)
 	}
 	return nil
+}
+
+// orphanedAppDescription builds a human-readable description for an orphaned app,
+// instead of dumping raw field names/values into the finding text.
+func orphanedAppDescription(sharedUsers int, isPremium bool) string {
+	switch {
+	case isPremium && sharedUsers > 0:
+		return fmt.Sprintf("No identifiable owner — shared with %d user(s) and uses a premium connector, accruing licensing cost with no accountability.", sharedUsers)
+	case isPremium:
+		return "No identifiable owner — uses a premium connector, accruing licensing cost with no accountability."
+	default:
+		return fmt.Sprintf("No identifiable owner — shared with %d user(s).", sharedUsers)
+	}
 }
 
 func fetchPPApps(ctx context.Context, token, envName string) ([]ppApp, error) {

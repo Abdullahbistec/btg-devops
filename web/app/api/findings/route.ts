@@ -38,9 +38,14 @@ export async function GET(req: NextRequest) {
     if (scope === 'pp')    clauses.push(`service IN (${PP_LIST})`);
     if (scope === 'azure') clauses.push(`service NOT IN (${PP_LIST})`);
 
+    // When scoped to a specific audit, return everything for it — a severity-sorted
+    // cap here previously let one high-volume service (e.g. many Critical "Orphaned
+    // App" findings) crowd every other service out of a 200-row window entirely.
+    const limit = auditId ? 5000 : 200;
+
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = db.prepare(
-      `SELECT * FROM findings ${where} ORDER BY severity, service LIMIT 200`
+      `SELECT * FROM findings ${where} ORDER BY severity, service LIMIT ${limit}`
     ).all() as unknown as Finding[];
 
     return NextResponse.json(rows);

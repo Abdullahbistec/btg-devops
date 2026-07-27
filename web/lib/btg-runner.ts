@@ -137,7 +137,7 @@ function extractResource(raw: RawFinding): string {
 function runCommand(
   command: string,
   env: Record<string, string>,
-  timeoutMs = 120000
+  timeoutMs = 1200000
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
