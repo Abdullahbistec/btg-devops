@@ -94,6 +94,7 @@ export interface NormalizedFinding {
   category: string;
   description: string;
   recommendation: string;
+  owner: string;
 }
 
 interface RawFinding {
@@ -101,6 +102,7 @@ interface RawFinding {
   category?: string;
   description?: string;
   recommendation?: string;
+  owner?: string;
   // Azure fields
   account_name?: string;
   resource_name?: string;
@@ -214,6 +216,7 @@ export async function runSingleCommand(
       category: f.category || '',
       description: f.description || '',
       recommendation: f.recommendation || '',
+      owner: f.owner || '',
     })),
   };
 }

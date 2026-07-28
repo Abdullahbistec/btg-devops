@@ -62,12 +62,14 @@ type ppAppProps struct {
 	UsesCustomApi         bool       `json:"usesCustomApi"`
 	AppPlanClassification string     `json:"appPlanClassification"`
 	Owner                 ppAppOwner `json:"owner"`
+	CreatedBy             ppAppOwner `json:"createdBy"`
 }
 
 type ppAppOwner struct {
 	DisplayName string `json:"displayName"`
 	Email       string `json:"email"`
 	ID          string `json:"id"`
+	Type        string `json:"type"`
 }
 
 // ---------- command ----------
@@ -148,9 +150,22 @@ func runPPApps(cmd *cobra.Command, args []string) error {
 			if owner == "" {
 				owner = app.Properties.Owner.DisplayName
 			}
+			// Dataverse's own built-in system apps (e.g. "Overview", "Dataverse Actions
+			// Page") are "owned" by an internal Dataverse service principal, not a
+			// person — fall back to createdBy, which often names the person who
+			// enabled Dataverse in that environment.
+			if owner == "" && app.Properties.Owner.Type == "ServicePrincipal" {
+				owner = app.Properties.CreatedBy.Email
+				if owner == "" {
+					owner = app.Properties.CreatedBy.DisplayName
+				}
+			}
 			if owner == "" {
 				owner = "(unknown)"
 			}
+			// True system app: both owner and creator are service principals — no
+			// human ever created or claimed it, so it's not really "orphaned."
+			isSystemApp := app.Properties.Owner.Type == "ServicePrincipal" && app.Properties.CreatedBy.Type == "ServicePrincipal"
 			daysSinceMod := ppDaysSince(app.Properties.LastModifiedTime)
 
 			// inventory counters
@@ -160,7 +175,7 @@ func runPPApps(cmd *cobra.Command, args []string) error {
 			if app.Properties.UsesCustomApi {
 				summary.CustomConnectorApps++
 			}
-			if owner == "(unknown)" {
+			if owner == "(unknown)" && !isSystemApp {
 				summary.OrphanedApps++
 			}
 
@@ -263,7 +278,7 @@ func runPPApps(cmd *cobra.Command, args []string) error {
 			}
 
 			// 7. Orphaned app — no identifiable owner but is shared or costs premium licences
-			if owner == "(unknown)" && (app.Properties.SharedUsersCount > 0 || app.Properties.UsesPremiumApi) {
+			if owner == "(unknown)" && !isSystemApp && (app.Properties.SharedUsersCount > 0 || app.Properties.UsesPremiumApi) {
 				findings = append(findings, PPAppFinding{
 					Severity:       Critical,
 					Category:       "Orphaned App",

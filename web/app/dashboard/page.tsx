@@ -27,6 +27,7 @@ interface DashData {
 interface Finding {
   id: string; audit_id: string; service: string; resource: string;
   severity: string; category: string; description: string; recommendation: string;
+  owner: string;
 }
 
 // ── Colours ────────────────────────────────────────────────────────────────
@@ -833,7 +834,7 @@ function FindingsCard({ findings, isPP }: { findings: Finding[]; isPP: boolean }
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr>
-              {['Severity', 'Service', 'Resource', 'Category', 'Description'].map(h => (
+              {['Severity', 'Service', 'Resource', 'Owner', 'Category', 'Description'].map(h => (
                 <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontSize: 9.5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--muted)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>{h}</th>
               ))}
             </tr>
@@ -847,12 +848,13 @@ function FindingsCard({ findings, isPP }: { findings: Finding[]; isPP: boolean }
                 <td style={{ padding: '8px 10px' }}><SevChip sev={f.severity} /></td>
                 <td style={{ padding: '8px 10px', color: 'var(--accent)', fontSize: 11, fontFamily: 'Consolas,monospace' }}>{f.service}</td>
                 <td style={{ padding: '8px 10px', color: 'var(--text)', fontWeight: 500, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.resource || '—'}</td>
+                <td style={{ padding: '8px 10px', color: f.owner ? '#B39DDB' : 'var(--dim)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.owner || '—'}</td>
                 <td style={{ padding: '8px 10px', color: 'var(--muted)' }}>{f.category}</td>
                 <td style={{ padding: '8px 10px', color: 'var(--text)', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.description}</td>
               </tr>
             ))}
             {tabFindings.length === 0 && (
-              <tr><td colSpan={5} style={{ padding: '24px 10px', textAlign: 'center', color: 'var(--muted)' }}>
+              <tr><td colSpan={6} style={{ padding: '24px 10px', textAlign: 'center', color: 'var(--muted)' }}>
                 No {[sevTab !== 'All' ? sevTab.toLowerCase() : '', svcKey !== 'all' ? activeSvcCfg.label : ''].filter(Boolean).join(' / ') || 'matching'} findings.
               </td></tr>
             )}
@@ -897,6 +899,7 @@ function FindingsCard({ findings, isPP }: { findings: Finding[]; isPP: boolean }
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 10, padding: '2px 8px', background: 'rgba(0,194,255,0.12)', border: '1px solid rgba(0,194,255,0.3)', borderRadius: 3, color: 'var(--accent)', fontFamily: 'monospace' }}>{detail.service}</span>
                 {detail.resource && <span style={{ fontSize: 10, padding: '2px 8px', background: 'var(--card2)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--muted)', fontFamily: 'monospace' }}>{detail.resource}</span>}
+                {detail.owner && <span style={{ fontSize: 10, padding: '2px 8px', background: 'rgba(122,94,167,0.12)', border: '1px solid rgba(122,94,167,0.35)', borderRadius: 3, color: '#B39DDB' }}>👤 {detail.owner}</span>}
               </div>
 
               {/* Description */}
