@@ -16,6 +16,7 @@ interface Audit {
   current_step?: string;
   total_steps?: number;
   completed_steps?: number;
+  commands_run?: string;
 }
 
 const AZURE_COMMANDS = [
@@ -71,6 +72,15 @@ function AuditProgressBar({ audit }: { audit: Audit | null }) {
   const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
   const ss = String(elapsed % 60).padStart(2, '0');
 
+  // The real, planned command list for this specific run (stored at audit creation
+  // time), not a hardcoded superset — so an Azure-only or PP-only scan only shows
+  // its own steps.
+  let plannedCommands: string[] = [];
+  try { plannedCommands = JSON.parse(audit?.commands_run || '[]'); } catch { /* ignore */ }
+  const runSteps = plannedCommands
+    .map(key => AUDIT_STEPS.find(s => s.key === key))
+    .filter((s): s is typeof AUDIT_STEPS[number] => !!s);
+
   return (
     <div style={{ background: '#FFA50210', borderBottom: '1px solid #FFA50230', padding: '10px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -82,9 +92,32 @@ function AuditProgressBar({ audit }: { audit: Audit | null }) {
         </div>
       </div>
       {/* Progress bar — driven by real completed-step count from the backend, not a timer */}
-      <div style={{ height: 4, background: 'rgba(255,165,2,0.15)', borderRadius: 2, overflow: 'hidden' }}>
+      <div style={{ height: 4, background: 'rgba(255,165,2,0.15)', borderRadius: 2, overflow: 'hidden', marginBottom: runSteps.length ? 6 : 0 }}>
         <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#FFA502,#FFD166)', borderRadius: 2, transition: 'width 0.6s ease' }} />
       </div>
+      {/* Step chips — only the commands actually planned for this run */}
+      {runSteps.length > 0 && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {runSteps.map((s) => {
+            const idx = plannedCommands.indexOf(s.key);
+            const c = s.color;
+            const stateDone = idx < completedSteps;
+            const stateCurrent = s.key === currentStepKey && idx === completedSteps - 1;
+            return (
+              <span key={s.key} style={{
+                fontSize: 9, padding: '2px 8px', borderRadius: 999, fontWeight: 700,
+                background: stateDone ? `${c}33` : `${c}12`,
+                border: `1px solid ${stateDone ? (stateCurrent ? c : `${c}99`) : `${c}44`}`,
+                color: stateDone ? (stateCurrent ? c : '#2ED573') : `${c}99`,
+                boxShadow: stateCurrent ? `0 0 10px ${c}55, 0 0 3px ${c}33` : 'none',
+                transition: 'all 0.3s ease',
+              }}>
+                {stateDone ? (stateCurrent ? '⟳ ' : '✓ ') : ''}{s.label}
+              </span>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -175,12 +208,24 @@ export default function AuditsPage() {
   const [pollingId, setPollingId] = useState<string | null>(null);
   const [polledAudit, setPolledAudit] = useState<Audit | null>(null);
   const [isAdmin, setIsAdmin] = useState(true);
+  const [subscriptions, setSubscriptions] = useState<{ id: string; name: string; is_active: number }[]>([]);
+  const [selectedSub, setSelectedSub] = useState<string>('');
 
   useEffect(() => {
     fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(d => {
       if (d) setIsAdmin(d.role === 'admin');
     });
   }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetch('/api/subscriptions').then(r => r.ok ? r.json() : []).then(list => {
+      const subs = Array.isArray(list) ? list : [];
+      setSubscriptions(subs);
+      const active = subs.find((s: { is_active: number }) => s.is_active) ?? subs[0];
+      if (active) setSelectedSub(active.id);
+    });
+  }, [isAdmin]);
 
   async function load() {
     setLoading(true);
@@ -197,7 +242,11 @@ export default function AuditsPage() {
       const res = await fetch('/api/audits/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...(commands ? { commands } : {}), ...(name ? { name } : {}) }),
+        body: JSON.stringify({
+          ...(commands ? { commands } : {}),
+          ...(name ? { name } : {}),
+          ...(selectedSub ? { subscription_id: selectedSub } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -244,7 +293,16 @@ export default function AuditsPage() {
             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{audits.length} audit{audits.length !== 1 ? 's' : ''} on record</div>
           </div>
           {isAdmin ? (
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+              {subscriptions.length > 1 && (
+                <select value={selectedSub} onChange={e => setSelectedSub(e.target.value)} disabled={running}
+                  title="Which subscription to scan"
+                  style={{ fontSize: 11, background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 3, padding: '5px 8px' }}>
+                  {subscriptions.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}{!s.is_active ? ' (inactive)' : ''}</option>
+                  ))}
+                </select>
+              )}
               <button onClick={() => runAudit(AZURE_COMMANDS, `Azure Scan ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`)} disabled={running} style={{
                 padding: '5px 14px', fontSize: 11, fontWeight: 700,
                 background: 'transparent', border: '1px solid #00C2FF', borderRadius: 3, color: '#00C2FF',

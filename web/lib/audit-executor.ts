@@ -43,7 +43,7 @@ export async function executeAudit(
 
   const cmdsToRun: Command[] = commands ?? [...ALL_COMMANDS];
   const auditName = name || `Audit ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`;
-  const audit = createAudit(resolvedSubId, auditName, cmdsToRun.length);
+  const audit = createAudit(resolvedSubId, auditName, cmdsToRun);
 
   const ppCredentials = getPPCredentials(credentials);
 

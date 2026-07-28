@@ -190,12 +190,12 @@ export function getAudit(id: string): Audit | null {
   return (getDB().prepare('SELECT * FROM audits WHERE id = ?').get(id) ?? null) as unknown as Audit | null;
 }
 
-export function createAudit(subscriptionId: string, name: string, totalSteps = 0): Audit {
+export function createAudit(subscriptionId: string, name: string, plannedCommands: string[] = []): Audit {
   const id = uuidv4();
   getDB().prepare(`
-    INSERT INTO audits (id, subscription_id, name, status, started_at, total_steps)
-    VALUES (?, ?, ?, 'running', datetime('now'), ?)
-  `).run(id, subscriptionId, name, totalSteps);
+    INSERT INTO audits (id, subscription_id, name, status, started_at, total_steps, commands_run)
+    VALUES (?, ?, ?, 'running', datetime('now'), ?, ?)
+  `).run(id, subscriptionId, name, plannedCommands.length, JSON.stringify(plannedCommands));
   return getAudit(id)!;
 }
 
