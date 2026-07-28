@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
   try {
     const severity = req.nextUrl.searchParams.get('severity') ?? '';
     const scope    = req.nextUrl.searchParams.get('scope') ?? '';
+    const remediationStatus = req.nextUrl.searchParams.get('remediation_status') ?? '';
     const db = getDB();
 
     // Default to the latest relevant audit — never show findings pooled across every audit ever run.
@@ -35,6 +36,7 @@ export async function GET(req: NextRequest) {
     const clauses: string[] = [];
     if (auditId)  clauses.push(`audit_id = '${auditId.replace(/'/g, "''")}'`);
     if (severity) clauses.push(`severity = '${severity.replace(/'/g, "''")}'`);
+    if (remediationStatus) clauses.push(`remediation_status = '${remediationStatus.replace(/'/g, "''")}'`);
     if (scope === 'pp')    clauses.push(`service IN (${PP_LIST})`);
     if (scope === 'azure') clauses.push(`service NOT IN (${PP_LIST})`);
 

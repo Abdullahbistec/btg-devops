@@ -24,9 +24,11 @@ type PPEnvFinding struct {
 }
 
 type PPEnvSummary struct {
-	TotalEnvironments  int            `json:"total_environments"`
-	BySku              map[string]int `json:"by_sku"`
-	FindingsBySeverity map[string]int `json:"findings_by_severity"`
+	TotalEnvironments     int            `json:"total_environments"`
+	BySku                 map[string]int `json:"by_sku"`
+	DataverseEnabledCount int            `json:"dataverse_enabled_count"`
+	DormantDataverseCount int            `json:"dormant_dataverse_count"`
+	FindingsBySeverity    map[string]int `json:"findings_by_severity"`
 }
 
 type PPEnvReport struct {
@@ -220,6 +222,23 @@ func runPPEnvironments(cmd *cobra.Command, args []string) error {
 				})
 			}
 		}
+
+		// 6. Dataverse enabled — always billed by capacity (database/file/log storage)
+		// regardless of usage, so a dormant instance is pure wasted cost.
+		if meta := env.Properties.LinkedEnvironmentMetadata; meta != nil {
+			summary.DataverseEnabledCount++
+			if meta.IsDormant {
+				summary.DormantDataverseCount++
+				findings = append(findings, PPEnvFinding{
+					Severity:       Warning,
+					Category:       "Dormant Dataverse — Wasted Capacity",
+					Environment:    name,
+					EnvironmentSku: sku,
+					Description:    fmt.Sprintf("'%s' has a dormant Dataverse database — capacity (storage) is still billed even though it's unused", name),
+					Recommendation: "Back up and delete the environment, or reactivate it, to stop paying for unused Dataverse capacity.",
+				})
+			}
+		}
 	}
 
 	// 6. Environment sprawl
@@ -259,7 +278,9 @@ func printPPEnvTable(r PPEnvReport) {
 
 	fmt.Println("SUMMARY")
 	fmt.Println(strings.Repeat("-", 50))
-	fmt.Printf("  Total Environments: %d\n", r.Summary.TotalEnvironments)
+	fmt.Printf("  Total Environments:        %d\n", r.Summary.TotalEnvironments)
+	fmt.Printf("  Dataverse-Enabled:         %d\n", r.Summary.DataverseEnabledCount)
+	fmt.Printf("  Dormant Dataverse:         %d\n", r.Summary.DormantDataverseCount)
 	fmt.Println()
 	fmt.Println("  By Type:")
 	for sku, count := range r.Summary.BySku {

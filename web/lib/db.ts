@@ -96,6 +96,9 @@ function initSchema(db: DatabaseSync) {
   try { db.exec(`ALTER TABLE findings ADD COLUMN remediation_status TEXT DEFAULT 'open'`); } catch {}
   try { db.exec(`ALTER TABLE audits ADD COLUMN resources_scanned INTEGER DEFAULT 0`); } catch {}
   try { db.exec(`ALTER TABLE findings ADD COLUMN owner TEXT DEFAULT ''`); } catch {}
+  try { db.exec(`ALTER TABLE audits ADD COLUMN current_step TEXT DEFAULT ''`); } catch {}
+  try { db.exec(`ALTER TABLE audits ADD COLUMN total_steps INTEGER DEFAULT 0`); } catch {}
+  try { db.exec(`ALTER TABLE audits ADD COLUMN completed_steps INTEGER DEFAULT 0`); } catch {}
 
   // Seed default subscription from env vars if table is empty
   const row = db.prepare('SELECT COUNT(*) as c FROM subscriptions').get() as unknown as { c: number };
@@ -134,6 +137,14 @@ export function listSubscriptions(): Subscription[] {
   `).all() as unknown as Subscription[];
 }
 
+/** Minimal, non-sensitive subscription list (id/name/active only) — safe for
+ * viewer-level read access, unlike listSubscriptions() which is admin-only. */
+export function listSubscriptionsBasic(): { id: string; name: string; is_active: number }[] {
+  return getDB().prepare(`
+    SELECT id, name, is_active FROM subscriptions ORDER BY created_at DESC
+  `).all() as unknown as { id: string; name: string; is_active: number }[];
+}
+
 export function getSubscription(id: string): Subscription | null {
   return (getDB().prepare('SELECT * FROM subscriptions WHERE id = ?').get(id) ?? null) as unknown as Subscription | null;
 }
@@ -162,6 +173,9 @@ export interface Audit {
   info_count: number;
   commands_run: string;
   error_message: string;
+  current_step?: string;
+  total_steps?: number;
+  completed_steps?: number;
 }
 
 export function listAudits(subscriptionId?: string): Audit[] {
@@ -176,13 +190,19 @@ export function getAudit(id: string): Audit | null {
   return (getDB().prepare('SELECT * FROM audits WHERE id = ?').get(id) ?? null) as unknown as Audit | null;
 }
 
-export function createAudit(subscriptionId: string, name: string): Audit {
+export function createAudit(subscriptionId: string, name: string, totalSteps = 0): Audit {
   const id = uuidv4();
   getDB().prepare(`
-    INSERT INTO audits (id, subscription_id, name, status, started_at)
-    VALUES (?, ?, ?, 'running', datetime('now'))
-  `).run(id, subscriptionId, name);
+    INSERT INTO audits (id, subscription_id, name, status, started_at, total_steps)
+    VALUES (?, ?, ?, 'running', datetime('now'), ?)
+  `).run(id, subscriptionId, name, totalSteps);
   return getAudit(id)!;
+}
+
+/** Called as each analyzer command starts, so the UI can show real progress
+ * instead of a simulated timer. */
+export function updateAuditStep(id: string, currentStep: string, completedSteps: number) {
+  getDB().prepare(`UPDATE audits SET current_step = ?, completed_steps = ? WHERE id = ?`).run(currentStep, completedSteps, id);
 }
 
 export function updateAuditCounts(id: string, critical: number, warning: number, info: number, commands: string[], resourcesScanned = 0) {

@@ -10,6 +10,7 @@ const NAV = [
     items: [
       { href: '/dashboard', label: 'Dashboard', icon: <GridIcon /> },
       { href: '/audits',    label: 'Audits',    icon: <ChartIcon /> },
+      { href: '/compare',   label: 'Compare',   icon: <GridIcon /> },
       { href: '/cost',      label: 'Cost & Usage', icon: <ClockIcon /> },
     ],
   },

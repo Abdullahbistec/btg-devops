@@ -224,9 +224,11 @@ type ppDLPInfo struct {
 }
 
 type ppLinkedEnvMeta struct {
-	FriendlyName string `json:"friendlyName"`
-	InstanceUrl  string `json:"instanceUrl"`
-	UniqueName   string `json:"uniqueName"`
+	FriendlyName  string `json:"friendlyName"`
+	InstanceUrl   string `json:"instanceUrl"`
+	UniqueName    string `json:"uniqueName"`
+	InstanceState string `json:"instanceState"`
+	IsDormant     bool   `json:"isDormant"`
 }
 
 // ---------- PP-7: DLP Policy API types ----------

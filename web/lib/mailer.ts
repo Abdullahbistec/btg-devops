@@ -40,6 +40,30 @@ export async function sendOTPEmail(to: string, otp: string): Promise<void> {
   });
 }
 
+export async function sendScheduleFailureEmail(to: string, auditName: string, errorMessage: string): Promise<void> {
+  if (DEV_MODE) {
+    console.log(`\n[BTG DevOps] Scheduled audit FAILED: ${auditName} — ${errorMessage}\n`);
+    return;
+  }
+  const from = process.env.SMTP_FROM ?? `BTG DevOps <${process.env.SMTP_USER}>`;
+  const transporter = createTransport();
+  await transporter.sendMail({
+    from, to,
+    subject: `[BTG DevOps] Scheduled audit failed — ${auditName}`,
+    html: `
+      <div style="font-family:'Segoe UI',sans-serif;background:#050818;padding:32px;border-radius:12px;max-width:500px;border:1px solid rgba(255,71,87,0.3);">
+        <h2 style="color:#FF4757;margin:0 0 8px;">Scheduled Audit Failed</h2>
+        <p style="color:#5B6FA8;margin:0 0 16px;">${auditName}</p>
+        <div style="background:rgba(255,71,87,0.08);border:1px solid rgba(255,71,87,0.25);border-radius:8px;padding:12px 16px;font-family:monospace;font-size:12px;color:#E8ECF8;word-break:break-word;">
+          ${errorMessage}
+        </div>
+        <p style="margin:20px 0 0;font-size:11px;color:#2A3560;">Check the Audits page in the BTG DevOps Security Console for details.</p>
+      </div>
+    `,
+    text: `Scheduled audit "${auditName}" failed:\n${errorMessage}`,
+  });
+}
+
 export async function sendRegistrationNotification(adminEmail: string, newUserEmail: string, newUserName: string): Promise<void> {
   if (DEV_MODE) {
     console.log(`\n[BTG DevOps] New access request: ${newUserName} <${newUserEmail}> — approve at Settings → User Management\n`);
@@ -66,13 +90,25 @@ export async function sendRegistrationNotification(adminEmail: string, newUserEm
   });
 }
 
+/** Configured notification recipients: NOTIFICATION_EMAILS (comma-separated) if
+ * set, otherwise falls back to the single ADMIN_EMAIL as before. */
+export function getNotificationRecipients(): string {
+  const list = process.env.NOTIFICATION_EMAILS?.trim();
+  if (list) return list;
+  return process.env.ADMIN_EMAIL ?? '';
+}
+
 export async function sendAuditSummaryEmail(
   to: string,
   auditName: string,
-  stats: { total: number; critical: number; warning: number; info: number }
+  stats: { total: number; critical: number; warning: number; info: number },
+  auditId?: string
 ): Promise<void> {
+  const appUrl = (process.env.APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+  const link = auditId ? `${appUrl}/dashboard?audit_id=${auditId}` : `${appUrl}/dashboard`;
+
   if (DEV_MODE) {
-    console.log(`\n[BTG DevOps] Audit complete: ${auditName} — ${stats.critical} crit, ${stats.warning} warn, ${stats.info} info, ${stats.total} total\n`);
+    console.log(`\n[BTG DevOps] Audit complete: ${auditName} — ${stats.critical} crit, ${stats.warning} warn, ${stats.info} info, ${stats.total} total — ${link}\n`);
     return;
   }
   const from = process.env.SMTP_FROM ?? `BTG DevOps <${process.env.SMTP_USER}>`;
@@ -89,10 +125,11 @@ export async function sendAuditSummaryEmail(
             `<tr><td style="padding:6px 0;color:#5B6FA8;font-size:13px;">${l}</td><td style="padding:6px 0;color:${c};font-weight:700;font-size:18px;">${v}</td></tr>`
           ).join('')}
         </table>
-        <p style="margin:20px 0 0;font-size:11px;color:#2A3560;">Log in to the BTG DevOps Security Console to view full details.</p>
+        <a href="${link}" style="display:inline-block;margin-top:20px;padding:10px 20px;background:#00C2FF;color:#04141a;font-weight:700;text-decoration:none;border-radius:6px;font-size:13px;">View this audit →</a>
+        <p style="margin:16px 0 0;font-size:11px;color:#2A3560;">Or log in to the BTG DevOps Security Console directly.</p>
       </div>
     `,
-    text: `Audit "${auditName}" complete.\nCritical: ${stats.critical}\nWarning: ${stats.warning}\nInfo: ${stats.info}\nTotal: ${stats.total}`,
+    text: `Audit "${auditName}" complete.\nCritical: ${stats.critical}\nWarning: ${stats.warning}\nInfo: ${stats.info}\nTotal: ${stats.total}\n\nView it here: ${link}`,
   });
 }
 

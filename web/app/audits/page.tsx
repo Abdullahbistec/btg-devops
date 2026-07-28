@@ -13,6 +13,9 @@ interface Audit {
   warning_count: number;
   info_count: number;
   subscription_id: string;
+  current_step?: string;
+  total_steps?: number;
+  completed_steps?: number;
 }
 
 const AZURE_COMMANDS = [
@@ -50,22 +53,21 @@ const AUDIT_STEPS = [
   { label: 'Power BI',          key: 'pp-powerbi',         color: '#F9CA24' },
 ];
 
-function AuditProgressBar() {
-  const [step, setStep] = useState(0);
+function AuditProgressBar({ audit }: { audit: Audit | null }) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    const start = Date.now();
-    const timer = setInterval(() => {
-      const s = Math.floor((Date.now() - start) / 1000);
-      setElapsed(s);
-      // Advance step roughly every 20s (4–6 min total / 12 steps)
-      setStep(Math.min(AUDIT_STEPS.length - 1, Math.floor(s / 20)));
-    }, 1000);
+    if (!audit?.started_at) return;
+    const start = new Date(audit.started_at.replace(' ', 'T') + 'Z').getTime();
+    const timer = setInterval(() => setElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000))), 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [audit?.started_at]);
 
-  const pct = Math.min(95, Math.round((step / AUDIT_STEPS.length) * 100));
+  const totalSteps = audit?.total_steps || 0;
+  const completedSteps = audit?.completed_steps || 0;
+  const currentStepKey = audit?.current_step || '';
+  const pct = totalSteps > 0 ? Math.min(100, Math.round((completedSteps / totalSteps) * 100)) : 0;
+  const lastLabel = AUDIT_STEPS.find(s => s.key === currentStepKey)?.label || currentStepKey;
   const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
   const ss = String(elapsed % 60).padStart(2, '0');
 
@@ -73,37 +75,15 @@ function AuditProgressBar() {
     <div style={{ background: '#FFA50210', borderBottom: '1px solid #FFA50230', padding: '10px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
         <div style={{ fontSize: 11, color: '#FFA502', fontWeight: 700 }}>
-          ⟳ Scanning: {AUDIT_STEPS[step]?.label}…
+          ⟳ {completedSteps > 0 ? `Last completed: ${lastLabel}` : 'Starting…'}
         </div>
         <div style={{ fontSize: 10, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>
-          {mm}:{ss} elapsed · {pct}%
+          {mm}:{ss} elapsed · {completedSteps}/{totalSteps || '?'} steps · {pct}%
         </div>
       </div>
-      {/* Progress bar */}
-      <div style={{ height: 4, background: 'rgba(255,165,2,0.15)', borderRadius: 2, overflow: 'hidden', marginBottom: 6 }}>
-        <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#FFA502,#FFD166)', borderRadius: 2, transition: 'width 1s ease' }} />
-      </div>
-      {/* Step chips */}
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        {AUDIT_STEPS.map((s, i) => {
-          const done    = i < step;
-          const current = i === step;
-          const c = done ? '#2ED573' : current ? s.color : s.color;
-          const alpha = done ? '33' : current ? '33' : '12';
-          const borderAlpha = done ? '99' : current ? 'cc' : '44';
-          return (
-            <span key={s.key} style={{
-              fontSize: 9, padding: '2px 8px', borderRadius: 999, fontWeight: 700,
-              background: `${c}${alpha}`,
-              border: `1px solid ${c}${borderAlpha}`,
-              color: done ? '#2ED573' : current ? s.color : `${s.color}99`,
-              boxShadow: current ? `0 0 10px ${s.color}55, 0 0 3px ${s.color}33` : done ? `0 0 6px #2ED57344` : 'none',
-              transition: 'all 0.3s ease',
-            }}>
-              {done ? '✓ ' : current ? '⟳ ' : ''}{s.label}
-            </span>
-          );
-        })}
+      {/* Progress bar — driven by real completed-step count from the backend, not a timer */}
+      <div style={{ height: 4, background: 'rgba(255,165,2,0.15)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#FFA502,#FFD166)', borderRadius: 2, transition: 'width 0.6s ease' }} />
       </div>
     </div>
   );
@@ -193,6 +173,7 @@ export default function AuditsPage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [pollingId, setPollingId] = useState<string | null>(null);
+  const [polledAudit, setPolledAudit] = useState<Audit | null>(null);
   const [isAdmin, setIsAdmin] = useState(true);
 
   useEffect(() => {
@@ -232,12 +213,14 @@ export default function AuditsPage() {
         const r2 = await fetch('/api/audits');
         const list: Audit[] = await r2.json();
         const a = list.find(x => x.id === id);
+        setPolledAudit(a ?? null);
         if (!a || a.status !== 'running') {
           clearInterval(poll);
           setRunning(false);
           setPollingId(null);
+          setPolledAudit(null);
         }
-      }, 4000);
+      }, 2000);
     } catch (e) {
       setRunError((e as Error).message);
       setRunning(false);
@@ -302,7 +285,7 @@ export default function AuditsPage() {
           </div>
         )}
         {running && pollingId && (
-          <AuditProgressBar />
+          <AuditProgressBar audit={polledAudit} />
         )}
 
         {/* Content */}

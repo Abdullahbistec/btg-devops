@@ -27,7 +27,7 @@ interface DashData {
 interface Finding {
   id: string; audit_id: string; service: string; resource: string;
   severity: string; category: string; description: string; recommendation: string;
-  owner: string;
+  owner: string; remediation_status?: string;
 }
 
 // ── Colours ────────────────────────────────────────────────────────────────
@@ -686,6 +686,14 @@ const SEV_TABS: { key: SevTab; color: string; bg: string }[] = [
   { key: 'Info',     color: '#54A0FF', bg: 'rgba(84,160,255,0.12)' },
 ];
 
+const REM_STATUS_TABS: { key: string; label: string; color: string }[] = [
+  { key: 'all',          label: 'All',          color: '#00C2FF' },
+  { key: 'open',         label: 'Open',         color: '#FF4757' },
+  { key: 'acknowledged', label: 'Acknowledged', color: '#FFA502' },
+  { key: 'resolved',     label: 'Resolved',     color: '#2ED573' },
+  { key: 'suppressed',   label: 'Suppressed',   color: '#5B6FA8' },
+];
+
 const AZURE_SVC_TABS: SvcTabDef[] = [
   { key: 'all',            label: 'All',            match: null,             color: '#A29BFE' },
   { key: 'ACR',            label: 'ACR',            match: 'ACR',            color: '#00C2FF' },
@@ -707,20 +715,31 @@ function FindingsCard({ findings, isPP }: { findings: Finding[]; isPP: boolean }
 
   const [sevTab,  setSevTab]  = useState<SevTab>('All');
   const [svcKey,  setSvcKey]  = useState<string>('all');
+  const [remTab,  setRemTab]  = useState<string>('all');
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<Finding | null>(null);
 
   function switchSev(t: SevTab)  { setSevTab(t);  setExpanded(false); }
   function switchSvc(k: string)  { setSvcKey(k);  setExpanded(false); }
+  function switchRem(k: string)  { setRemTab(k);  setExpanded(false); }
 
   // Active service tab definition
   const activeSvcCfg: SvcTabDef = svcTabs.find(t => t.key === svcKey) ?? svcTabs[0];
 
-  // Apply severity filter then service filter
+  // Apply severity filter, then service filter, then remediation-status filter
   const sevFiltered = sevTab === 'All' ? findings : findings.filter(f => f.severity === sevTab);
-  const tabFindings = activeSvcCfg.match
+  const svcFiltered = activeSvcCfg.match
     ? sevFiltered.filter(f => f.service === activeSvcCfg.match)
     : sevFiltered;
+  const tabFindings = remTab === 'all'
+    ? svcFiltered
+    : svcFiltered.filter(f => (f.remediation_status || 'open') === remTab);
+
+  const remCounts: Record<string, number> = { all: svcFiltered.length, open: 0, acknowledged: 0, resolved: 0, suppressed: 0 };
+  for (const f of svcFiltered) {
+    const st = f.remediation_status || 'open';
+    remCounts[st] = (remCounts[st] || 0) + 1;
+  }
 
   // Severity counts (within the active service filter)
   const svcBase = activeSvcCfg.match
@@ -820,6 +839,32 @@ function FindingsCard({ findings, isPP }: { findings: Finding[]; isPP: boolean }
                   {tab.label}
                   <span style={{ marginLeft: 3, opacity: 0.75, fontVariantNumeric: 'tabular-nums', fontSize: 9 }}>
                     {svcCount(tab)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Remediation status tabs */}
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--dim)', textTransform: 'uppercase', letterSpacing: '0.07em', width: 52, flexShrink: 0 }}>Status</span>
+          <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+            {REM_STATUS_TABS.map(({ key, label, color }) => {
+              const isActive = remTab === key;
+              return (
+                <button key={key} onClick={() => switchRem(key)} className="tab-pill" style={{
+                  padding: '3px 11px', fontSize: 10, fontWeight: 700, cursor: 'pointer',
+                  background: isActive ? `${color}30` : `${color}10`,
+                  border: `1.5px solid ${isActive ? color : `${color}50`}`,
+                  color: isActive ? '#fff' : `${color}bb`,
+                  boxShadow: isActive
+                    ? `0 0 14px ${color}99, 0 0 28px ${color}44, inset 0 1px 0 rgba(255,255,255,0.25)`
+                    : `0 0 6px ${color}22`,
+                }}>
+                  {label}
+                  <span style={{ marginLeft: 3, opacity: 0.75, fontVariantNumeric: 'tabular-nums', fontSize: 9 }}>
+                    {remCounts[key] ?? 0}
                   </span>
                 </button>
               );
