@@ -9,9 +9,8 @@ export async function askClaude(prompt: string): Promise<string> {
   const client = new Anthropic();
 
   const response = await client.messages.create({
-    model: 'claude-opus-5',
+    model: 'claude-haiku-4-5',
     max_tokens: 4096,
-    output_config: { effort: 'low' },
     messages: [{ role: 'user', content: prompt }],
   });
 
