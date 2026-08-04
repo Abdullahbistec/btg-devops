@@ -24,11 +24,12 @@ type PPEnvFinding struct {
 }
 
 type PPEnvSummary struct {
-	TotalEnvironments     int            `json:"total_environments"`
-	BySku                 map[string]int `json:"by_sku"`
-	DataverseEnabledCount int            `json:"dataverse_enabled_count"`
-	DormantDataverseCount int            `json:"dormant_dataverse_count"`
-	FindingsBySeverity    map[string]int `json:"findings_by_severity"`
+	TotalEnvironments       int            `json:"total_environments"`
+	BySku                   map[string]int `json:"by_sku"`
+	DataverseEnabledCount   int            `json:"dataverse_enabled_count"`
+	DormantDataverseCount   int            `json:"dormant_dataverse_count"`
+	ManagedEnvironmentCount int            `json:"managed_environment_count"`
+	FindingsBySeverity      map[string]int `json:"findings_by_severity"`
 }
 
 type PPEnvReport struct {
@@ -239,6 +240,26 @@ func runPPEnvironments(cmd *cobra.Command, args []string) error {
 				})
 			}
 		}
+
+		// 7. Managed Environment governance — usage insights, sharing limits, maker
+		// welcome content. Distinct from DLP; trial and disabled environments are
+		// excluded since governance doesn't meaningfully apply to them.
+		if isManagedEnvironment(env) {
+			summary.ManagedEnvironmentCount++
+		} else if !env.Properties.IsDisabled && !strings.EqualFold(sku, "Trial") {
+			sev := Info
+			if env.Properties.LinkedEnvironmentMetadata != nil || strings.EqualFold(sku, "Production") {
+				sev = Warning
+			}
+			findings = append(findings, PPEnvFinding{
+				Severity:       sev,
+				Category:       "Not a Managed Environment",
+				Environment:    name,
+				EnvironmentSku: sku,
+				Description:    fmt.Sprintf("'%s' does not have Managed Environment enabled — no usage insights, sharing limits, or maker onboarding controls", name),
+				Recommendation: "Enable Managed Environment via Power Platform admin center → Environments → select the environment → Enable Managed Environment.",
+			})
+		}
 	}
 
 	// 6. Environment sprawl
@@ -281,6 +302,7 @@ func printPPEnvTable(r PPEnvReport) {
 	fmt.Printf("  Total Environments:        %d\n", r.Summary.TotalEnvironments)
 	fmt.Printf("  Dataverse-Enabled:         %d\n", r.Summary.DataverseEnabledCount)
 	fmt.Printf("  Dormant Dataverse:         %d\n", r.Summary.DormantDataverseCount)
+	fmt.Printf("  Managed Environments:      %d / %d\n", r.Summary.ManagedEnvironmentCount, r.Summary.TotalEnvironments)
 	fmt.Println()
 	fmt.Println("  By Type:")
 	for sku, count := range r.Summary.BySku {
