@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listFindings, getDashboardStats } from '@/lib/db';
-import { askClaude } from '@/lib/claude';
+import { askGemini } from '@/lib/gemini';
 
 const TOP_FINDINGS_LIMIT = 20;
 
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
       ? `You are a cloud security analyst. Given these Azure and Power Platform audit findings, write a short executive risk summary (3-5 sentences) highlighting the most important issues and overall posture.\n\n${context}`
       : `You are a cloud security analyst. Given these Azure and Power Platform audit findings, answer the user's question concisely and specifically, referencing findings by name where relevant.\n\n${context}\n\nQuestion: ${question}`;
 
-    const answer = await askClaude(prompt);
+    const answer = await askGemini(prompt);
     return NextResponse.json({ answer });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
