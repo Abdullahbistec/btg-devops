@@ -533,14 +533,38 @@ var allAzureCmds = []string{
 }
 ```
 
-- [ ] **Step 2: Build and verify `idle` is included**
+- [ ] **Step 2: Update the now-stale scope description and verify**
+
+`analyzeAllCmd`'s `Long` field describes the `azure` scope as "12 + sp-expiry" commands — now stale (13 + idle = 14 total). In `cmd/analyze_all.go`, change:
+
+```go
+	Long: `Runs every analyzer in sequence and merges findings into a single report.
+
+Scope flags:
+  --scope azure    Azure analyzers only (12 + sp-expiry)
+  --scope pp       Power Platform analyzers only (5 commands)
+  --scope all      Everything (default)
+```
+
+to:
+
+```go
+	Long: `Runs every analyzer in sequence and merges findings into a single report.
+
+Scope flags:
+  --scope azure    Azure analyzers only (13 + sp-expiry + idle)
+  --scope pp       Power Platform analyzers only (5 commands)
+  --scope all      Everything (default)
+```
+
+Then build and check the help output:
 
 ```bash
 go build ./...
 go run . analyze all --help
 ```
 
-Expected: builds cleanly; the `--scope` flag's help text still lists `azure` as covering "12 + sp-expiry" commands — that description in the `Long` string is now stale (13 + idle = 14), but updating prose copy is optional polish, not required for correctness. If you want to update it, change `Long` in `analyzeAllCmd`'s definition from `--scope azure    Azure analyzers only (12 + sp-expiry)` to `--scope azure    Azure analyzers only (13 + idle)`.
+Expected: builds cleanly; `--help` shows the updated scope description.
 
 - [ ] **Step 3: Run the existing test suite**
 
