@@ -11,3 +11,6 @@ web/*.db
 web/*.db-shm
 web/*.db-wal
 web/tsconfig.tsbuildinfo
+
+# Subagent-driven-development scratch workspaces
+.superpowers/
