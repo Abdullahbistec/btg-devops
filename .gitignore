@@ -1,1 +1,13 @@
 btg-devops/btg-devops
+btg-devops.exe
+btg-devops
+.env
+
+# web/ — Next.js app
+web/node_modules/
+web/.next/
+web/.env.local
+web/*.db
+web/*.db-shm
+web/*.db-wal
+web/tsconfig.tsbuildinfo
