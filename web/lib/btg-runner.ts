@@ -51,6 +51,7 @@ export const AZURE_COMMANDS = [
   'resourcegroup',
   'iam',
   'sp-expiry',
+  'idle',
 ] as const;
 
 export const PP_COMMANDS = [
@@ -79,6 +80,7 @@ const SERVICE_LABELS: Record<string, string> = {
   'resourcegroup': 'Resource Groups',
   'iam': 'IAM',
   'sp-expiry': 'SP Expiry',
+  'idle': 'Idle & Waste',
   'powerplatform': 'Power Platform',
   'pp-environments': 'PP Environments',
   'pp-apps': 'PP Apps',
