@@ -16,6 +16,7 @@ const CMD_COLORS: Record<string, string> = {
   'resourcegroup':      '#FD79A8',
   'iam':                '#E17055',
   'sp-expiry':          '#FDCB6E',
+  'idle':               '#F368E0',
   'powerplatform':      '#00CEC9',
   'pp-environments':    '#6C5CE7',
   'pp-apps':            '#55EFC4',

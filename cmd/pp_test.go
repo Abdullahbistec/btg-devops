@@ -126,6 +126,33 @@ func TestIsTrialSKU_PaidPlan(t *testing.T) {
 	}
 }
 
+// ---------- isManagedEnvironment ----------
+
+func TestIsManagedEnvironment_Standard(t *testing.T) {
+	env := ppEnvironment{Properties: ppEnvironmentProps{
+		GovernanceConfiguration: &ppGovernanceConfig{ProtectionLevel: "Standard"},
+	}}
+	if !isManagedEnvironment(env) {
+		t.Error("protectionLevel Standard should be a Managed Environment")
+	}
+}
+
+func TestIsManagedEnvironment_Basic(t *testing.T) {
+	env := ppEnvironment{Properties: ppEnvironmentProps{
+		GovernanceConfiguration: &ppGovernanceConfig{ProtectionLevel: "Basic"},
+	}}
+	if isManagedEnvironment(env) {
+		t.Error("protectionLevel Basic should NOT be a Managed Environment")
+	}
+}
+
+func TestIsManagedEnvironment_Nil(t *testing.T) {
+	env := ppEnvironment{Properties: ppEnvironmentProps{GovernanceConfiguration: nil}}
+	if isManagedEnvironment(env) {
+		t.Error("nil governanceConfiguration should NOT be a Managed Environment")
+	}
+}
+
 // ---------- DLP helpers ----------
 
 func TestDLPHTTPBlocked_Blocked(t *testing.T) {

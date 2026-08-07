@@ -16,3 +16,6 @@ Each feature added to the CLI is documented here with requirements, checks perfo
 | 010 | [App Service Plan Analysis](010-appserviceplan-analysis.md) | `analyze appserviceplan` | v0.10.0 |
 | 011 | [Azure AI / Cognitive Services Analysis](011-cognitiveservices-analysis.md) | `analyze cognitiveservices` | v0.11.0 |
 | 012 | [Resource Group Analysis](012-resourcegroup-analysis.md) | `analyze resourcegroup` | v0.12.0 |
+| 013 | [Power Platform Service Principal Setup](013-powerplatform-setup.md) | `analyze pp-*`, `analyze powerplatform` | — |
+| 014 | [Claude Code MCP Server Setup](014-mcp-server-setup.md) | `mcp` | — |
+| 015 | [Unified Analyzer Interface](015-unified-analyzer-interface.md) | `analyze all` | design phase |

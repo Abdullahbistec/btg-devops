@@ -51,6 +51,7 @@ export const AZURE_COMMANDS = [
   'resourcegroup',
   'iam',
   'sp-expiry',
+  'idle',
 ] as const;
 
 export const PP_COMMANDS = [
@@ -79,6 +80,7 @@ const SERVICE_LABELS: Record<string, string> = {
   'resourcegroup': 'Resource Groups',
   'iam': 'IAM',
   'sp-expiry': 'SP Expiry',
+  'idle': 'Idle & Waste',
   'powerplatform': 'Power Platform',
   'pp-environments': 'PP Environments',
   'pp-apps': 'PP Apps',
@@ -193,7 +195,12 @@ export async function runSingleCommand(
     AZURE_SUBSCRIPTION_ID: credentials.subscriptionId,
   };
 
-  const stdout = await runCommand(command, env);
+  // `idle` sleeps 1s per resource plus 2-3 serialized Azure API calls each,
+  // across up to 8 resource types — on large subscriptions this can exceed
+  // the default 20-minute timeout, so give it more headroom.
+  const stdout = command === 'idle'
+    ? await runCommand(command, env, 2400000)
+    : await runCommand(command, env);
   const service = SERVICE_LABELS[command] || command;
 
   let parsed: { findings?: RawFinding[]; summary?: Record<string, unknown> };

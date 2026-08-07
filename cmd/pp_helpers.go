@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
@@ -203,16 +204,29 @@ type ppEnvironment struct {
 }
 
 type ppEnvironmentProps struct {
-	DisplayName               string           `json:"displayName"`
-	EnvironmentSku            string           `json:"environmentSku"`
-	IsDefault                 bool             `json:"isDefault"`
-	IsDisabled                bool             `json:"isDisabled"`
-	ProvisioningState         string           `json:"provisioningState"`
-	CreatedTime               string           `json:"createdTime"`
-	LastModifiedTime          string           `json:"lastModifiedTime"`
-	ExpirationTime            *string          `json:"expirationTime"`
-	EnvironmentPolicies       ppEnvPolicies    `json:"environmentPolicies"`
-	LinkedEnvironmentMetadata *ppLinkedEnvMeta `json:"linkedEnvironmentMetadata"`
+	DisplayName               string              `json:"displayName"`
+	EnvironmentSku            string              `json:"environmentSku"`
+	IsDefault                 bool                `json:"isDefault"`
+	IsDisabled                bool                `json:"isDisabled"`
+	ProvisioningState         string              `json:"provisioningState"`
+	CreatedTime               string              `json:"createdTime"`
+	LastModifiedTime          string              `json:"lastModifiedTime"`
+	ExpirationTime            *string             `json:"expirationTime"`
+	EnvironmentPolicies       ppEnvPolicies       `json:"environmentPolicies"`
+	LinkedEnvironmentMetadata *ppLinkedEnvMeta    `json:"linkedEnvironmentMetadata"`
+	GovernanceConfiguration   *ppGovernanceConfig `json:"governanceConfiguration"`
+}
+
+type ppGovernanceConfig struct {
+	ProtectionLevel string `json:"protectionLevel"`
+}
+
+// isManagedEnvironment reports whether Microsoft's Managed Environment
+// governance layer (usage insights, sharing limits, maker welcome content)
+// is enabled — distinct from DLP, which is checked separately.
+func isManagedEnvironment(env ppEnvironment) bool {
+	return env.Properties.GovernanceConfiguration != nil &&
+		strings.EqualFold(env.Properties.GovernanceConfiguration.ProtectionLevel, "Standard")
 }
 
 type ppEnvPolicies struct {
