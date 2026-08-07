@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
+import { AZURE_COMMANDS, PP_COMMANDS } from '@/lib/btg-runner';
 
 interface Audit {
   id: string;
@@ -18,13 +19,6 @@ interface Audit {
   completed_steps?: number;
   commands_run?: string;
 }
-
-const AZURE_COMMANDS = [
-  'appservice-traffic', 'storage', 'nsg', 'acr', 'cosmosdb', 'keyvault',
-  'functions', 'publicip', 'appserviceplan', 'cognitiveservices', 'resourcegroup',
-  'iam', 'sp-expiry',
-];
-const PP_COMMANDS = ['powerplatform', 'pp-environments', 'pp-apps', 'pp-flows', 'pp-powerbi'];
 
 const STATUS_COLOR: Record<string, string> = {
   completed: '#2ED573',
@@ -47,6 +41,7 @@ const AUDIT_STEPS = [
   { label: 'Resource Group',    key: 'resourcegroup',      color: '#FD79A8' },
   { label: 'IAM',               key: 'iam',                color: '#E17055' },
   { label: 'SP Expiry',         key: 'sp-expiry',          color: '#FDCB6E' },
+  { label: 'Idle & Waste',      key: 'idle',               color: '#F368E0' },
   { label: 'Power Platform',    key: 'powerplatform',      color: '#00CEC9' },
   { label: 'PP Environments',   key: 'pp-environments',    color: '#6C5CE7' },
   { label: 'PP Apps',           key: 'pp-apps',            color: '#55EFC4' },
@@ -303,14 +298,14 @@ export default function AuditsPage() {
                   ))}
                 </select>
               )}
-              <button onClick={() => runAudit(AZURE_COMMANDS, `Azure Scan ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`)} disabled={running} style={{
+              <button onClick={() => runAudit([...AZURE_COMMANDS], `Azure Scan ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`)} disabled={running} style={{
                 padding: '5px 14px', fontSize: 11, fontWeight: 700,
                 background: 'transparent', border: '1px solid #00C2FF', borderRadius: 3, color: '#00C2FF',
                 opacity: running ? 0.5 : 1, cursor: running ? 'not-allowed' : 'pointer',
               }}>
                 {running ? '⟳ Running…' : '▶ Run Azure Scan'}
               </button>
-              <button onClick={() => runAudit(PP_COMMANDS, `Power Platform Scan ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`)} disabled={running} style={{
+              <button onClick={() => runAudit([...PP_COMMANDS], `Power Platform Scan ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`)} disabled={running} style={{
                 padding: '5px 14px', fontSize: 11, fontWeight: 700,
                 background: 'transparent', border: '1px solid #00CEC9', borderRadius: 3, color: '#00CEC9',
                 opacity: running ? 0.5 : 1, cursor: running ? 'not-allowed' : 'pointer',

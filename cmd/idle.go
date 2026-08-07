@@ -145,6 +145,18 @@ func runIdle(_ *cobra.Command, _ []string) error {
 
 	total := len(resources)
 	if total == 0 {
+		if flagOutput == "json" {
+			summary := IdleSummary{
+				TotalScanned:       0,
+				IdleCount:          0,
+				HighWasteCount:     0,
+				MediumWasteCount:   0,
+				FindingsBySeverity: map[string]int{},
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(IdleReport{Summary: summary, Findings: nil})
+		}
 		fmt.Println("No supported resources found in subscription.")
 		return nil
 	}

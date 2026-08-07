@@ -172,7 +172,7 @@ func runACRUsage(ctx context.Context, subID string, cred *azidentity.DefaultAzur
 	if sku == "Premium" && totalCost > 0 && totalCost < 5 {
 		saving := totalCost * 0.60
 		totalSaving += saving
-		tips = append(tips, "Premium SKU with near-zero activity ($%.2f) — strongly consider Basic or Standard tier")
+		tips = append(tips, fmt.Sprintf("Premium SKU with near-zero activity ($%.2f) — strongly consider Basic or Standard tier", totalCost))
 	}
 
 	tip := ""

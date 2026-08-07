@@ -195,7 +195,12 @@ export async function runSingleCommand(
     AZURE_SUBSCRIPTION_ID: credentials.subscriptionId,
   };
 
-  const stdout = await runCommand(command, env);
+  // `idle` sleeps 1s per resource plus 2-3 serialized Azure API calls each,
+  // across up to 8 resource types — on large subscriptions this can exceed
+  // the default 20-minute timeout, so give it more headroom.
+  const stdout = command === 'idle'
+    ? await runCommand(command, env, 2400000)
+    : await runCommand(command, env);
   const service = SERVICE_LABELS[command] || command;
 
   let parsed: { findings?: RawFinding[]; summary?: Record<string, unknown> };

@@ -61,7 +61,9 @@ the piece that would.
 - No changes to `web/lib/btg-runner.ts`'s `extractResource()` or
   `analyze_all.go`'s `resourceFields` heuristic — the new command's output is
   shaped to work with both as they exist today (see "Wiring").
-- No new `go.mod` dependencies.
+- No new `go.mod` dependencies. **Correction (post-implementation):** this
+  turned out to be wrong — `armcostmanagement` was required after all; see
+  the implementation plan for the correction.
 
 ## Design
 
@@ -74,10 +76,15 @@ From `yomal/main:"CLI Engine/cmd/"`:
   (8 ARM resource types), `usageTypeAliases`.
 - `usage_acr.go`, `usage_appservice.go`, `usage_appserviceplan.go`,
   `usage_cognitiveservices.go`, `usage_cosmosdb.go`, `usage_functions.go`,
-  `usage_keyvault.go`, `usage_publicip.go`, `usage_storage.go` — the 9
-  per-type report builders. (`appservice` and `functions` both target the ARM
-  type `microsoft.web/sites`, differentiated by resource `kind` — that's why
-  there are 9 builder files for 8 ARM types.)
+  `usage_keyvault.go`, `usage_publicip.go`, `usage_storage.go` — 9 builder
+  files for 8 ARM types, because `appservice` and `functions` both target the
+  ARM type `microsoft.web/sites`. **Correction (post-implementation):** these
+  are not differentiated by resource `kind` at dispatch time — `buildUsageReport`
+  in `cmd/usage.go` routes every `microsoft.web/sites` resource to
+  `runAppServiceUsage` unconditionally. `usage_functions.go` was ported
+  verbatim from yomal's fork but its `BuildFunctionsUsageTips` function has no
+  call sites in this codebase; it's currently unreferenced dead code, not
+  kind-based dispatch.
 - `idle.go` — the `analyze idle` command: discovers resources by type, calls
   the corresponding `usage_<service>.go` builder for each, buckets results by
   `WasteScore`.
@@ -150,10 +157,12 @@ sentence) and is new, mapping `(WasteScore, ResourceType)` onto categories
 
 ### 4. Wiring into the CLI and dashboard
 
-- No new `go.mod` dependencies — `armresources`, `armmonitor`, `armstorage`,
-  `armappservice`, `armkeyvault`, `armcontainerregistry`, `armcosmos`,
-  `armcognitiveservices`, `armnetwork` are all already present (used by the
-  existing 13 analyzers).
+- `armresources`, `armmonitor`, `armstorage`, `armappservice`, `armkeyvault`,
+  `armcontainerregistry`, `armcosmos`, `armcognitiveservices`, `armnetwork`
+  are all already present (used by the existing 13 analyzers). **Correction
+  (post-implementation):** one new dependency was required after all —
+  `armcostmanagement`, for `usage.go`'s `queryCostTrend()`; see the
+  implementation plan for the correction.
 - `IdleFinding.ResourceName` (`json:"resource_name"`) is deliberately named to
   match a field both existing normalization heuristics already check: Go's
   `resourceFields` list in `analyze_all.go`, and TypeScript's
