@@ -82,6 +82,7 @@ git commit -m "chore: add armcostmanagement dependency for idle/waste detection"
 - Consumes: `Severity`/`Critical`/`Warning`/`Info` (existing, defined in `cmd/iam.go`), `deref()`/`extractResourceGroup()` (existing, `cmd/appservice_traffic.go` or wherever currently defined), `getSubscriptionID()`, `flagSubscriptionID`, `flagOutput` (existing package-level vars, `cmd/appservice_traffic.go`), `analyzeCmd` (existing Cobra parent command).
 - Produces: types `MeterCost`, `UsageSubResource`, `UsageReport` (with fields `ResourceName`, `ResourceType`, `ResourceGroup`, `Period`, `Days`, `TotalCost`, `Currency`, `Severity`, `Meters`, `SubResources`, `TotalSaving`, `TopRecommendation`, `Utilization map[string]float64`, `WasteScore string`, `WasteReason string`, `PreviousCost`, `CostChangePct`, `CostTrend`); package vars `supportedUsageTypes []string`, `usageTypeAliases map[string]string`; functions `buildUsageReport(ctx, subID, cred, resourceID, name, resourceType, rg string, days int) (*UsageReport, error)` and `buildUtilizationString(util map[string]float64) string`, `calcWasteScore(cost, primaryPct, dailyActivity float64) (score, reason string)`, `costSeverity(cost float64) Severity` — all consumed by Task 3.
 - Also produces a standalone `analyze usage` Cobra command (yomal's own resource drill-down feature), included because it ships in the same file as the shared engine — not part of this feature's stated goal, but harmless and not worth stripping out at the risk of missing a transitive dependency.
+- Also produces `anyToFloat64(v any) float64`, a small helper `usage.go` calls internally that is not present anywhere in this repo — see Step 2 below. Nothing outside `usage.go` needs it directly.
 
 - [ ] **Step 1: Copy all 10 files verbatim from yomal's fork**
 
@@ -100,18 +101,64 @@ git show yomal/main:"CLI Engine/cmd/usage_publicip.go" > cmd/usage_publicip.go
 git show yomal/main:"CLI Engine/cmd/usage_storage.go" > cmd/usage_storage.go
 ```
 
-- [ ] **Step 2: Build and vet**
+- [ ] **Step 2: Add the one small helper `usage.go` borrows from `costanalysis.go`**
+
+`usage.go` calls `anyToFloat64(v any) float64` (line ~563), which is defined in
+yomal's `CLI Engine/cmd/costanalysis.go` — a file this plan deliberately does
+not port (it duplicates the dashboard's already-working `SpendView`, per the
+design spec's Non-goals). `anyToFloat64` itself is a small, generic,
+self-contained type-converter with no other dependency on anything
+cost-management-specific, so it is ported on its own rather than pulling in
+the file it happens to live in. Add this function to the bottom of
+`cmd/usage.go` (verified as the only such missing dependency — see below):
+
+```go
+func anyToFloat64(v any) float64 {
+	switch val := v.(type) {
+	case float64:
+		return val
+	case float32:
+		return float64(val)
+	case int:
+		return float64(val)
+	case int64:
+		return float64(val)
+	case int32:
+		return float64(val)
+	default:
+		var f float64
+		_, _ = fmt.Sscanf(fmt.Sprintf("%v", val), "%f", &f)
+		return f
+	}
+}
+```
+
+`cmd/usage.go`'s existing import block already includes `"fmt"` — no import
+changes needed.
+
+- [ ] **Step 3: Build and vet**
 
 ```bash
 go build ./...
 go vet ./...
 ```
 
-Expected: both succeed with no errors. If `go build` reports a "redeclared" error for any symbol, that means research missed a collision — delete the duplicate definition from the newly-copied file (not from the pre-existing file) and re-run.
+Expected: both succeed with no errors. This was verified end-to-end during
+plan revision — Step 2's addition is the complete fix, no further missing
+symbols. If `go build` reports a "redeclared" error for any symbol, that
+means research missed a collision — delete the duplicate definition from the
+newly-copied file (not from the pre-existing file) and re-run. If it reports
+`undefined: <something>` for any symbol other than `anyToFloat64`, stop and
+report BLOCKED rather than guessing — that would mean a second gap this plan
+revision did not catch.
 
-If `go vet` or `go build` complains about an unused import or a symbol only referenced by `cmd/idle.go` (not yet ported — that's Task 3), that's expected and will resolve once Task 3 lands; do not modify these files to work around it — if the failure is specifically "undefined: <symbol only idle.go would define>", stop and re-order: do Task 3 before finishing this step's verification. (In practice this shouldn't happen — these 10 files don't reference anything from `idle.go`.)
+If `go vet` or `go build` complains about an unused import or a symbol only
+referenced by `cmd/idle.go` (not yet ported — that's Task 3), that's expected
+and will resolve once Task 3 lands; do not modify these files to work around
+it. (In practice this shouldn't happen — these 10 files don't reference
+anything from `idle.go`.)
 
-- [ ] **Step 3: Run the existing test suite to confirm nothing broke**
+- [ ] **Step 4: Run the existing test suite to confirm nothing broke**
 
 ```bash
 go test ./...
@@ -119,7 +166,7 @@ go test ./...
 
 Expected: all existing tests still pass (this task adds no tests of its own — `calcWasteScore` gets tests in Task 4).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add cmd/usage.go cmd/usage_acr.go cmd/usage_appservice.go cmd/usage_appserviceplan.go cmd/usage_cognitiveservices.go cmd/usage_cosmosdb.go cmd/usage_functions.go cmd/usage_keyvault.go cmd/usage_publicip.go cmd/usage_storage.go
