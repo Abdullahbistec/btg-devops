@@ -57,6 +57,7 @@ var allServiceLabels = map[string]string{
 	"resourcegroup":      "Resource Groups",
 	"iam":                "IAM",
 	"sp-expiry":          "SP Expiry",
+	"idle":               "Idle & Waste",
 	"powerplatform":      "Power Platform",
 	"pp-environments":    "PP Environments",
 	"pp-apps":            "PP Apps",
@@ -67,7 +68,7 @@ var allServiceLabels = map[string]string{
 var allAzureCmds = []string{
 	"appservice-traffic", "storage", "nsg", "acr", "cosmosdb",
 	"keyvault", "functions", "publicip", "appserviceplan",
-	"cognitiveservices", "resourcegroup", "iam", "sp-expiry",
+	"cognitiveservices", "resourcegroup", "iam", "sp-expiry", "idle",
 }
 
 var allPPCmds = []string{
@@ -95,7 +96,7 @@ var analyzeAllCmd = &cobra.Command{
 	Long: `Runs every analyzer in sequence and merges findings into a single report.
 
 Scope flags:
-  --scope azure    Azure analyzers only (12 + sp-expiry)
+  --scope azure    Azure analyzers only (13 + sp-expiry + idle)
   --scope pp       Power Platform analyzers only (5 commands)
   --scope all      Everything (default)
 
