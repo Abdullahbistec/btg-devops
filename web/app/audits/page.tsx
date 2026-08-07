@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
-import { AZURE_COMMANDS, PP_COMMANDS } from '@/lib/btg-runner';
+import { AZURE_COMMANDS, PP_COMMANDS } from '@/lib/btg-commands';
 
 interface Audit {
   id: string;

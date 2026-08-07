@@ -1,18 +1,18 @@
 import { execFile } from 'child_process';
 import path from 'path';
+import { AZURE_COMMANDS, PP_COMMANDS, ALL_COMMANDS, PP_SERVICE_LABELS } from './btg-commands';
+import type { Command } from './btg-commands';
+
+// Re-exported for existing server-side consumers (API routes, audit-executor.ts).
+// Client components must import these from '@/lib/btg-commands' directly —
+// this file is server-only (imports 'child_process') and cannot be bundled
+// for the browser.
+export { AZURE_COMMANDS, PP_COMMANDS, ALL_COMMANDS, PP_SERVICE_LABELS };
+export type { Command };
 
 const BTG_PATH = process.env.BTG_DEVOPS_PATH
   ? path.resolve(process.cwd(), process.env.BTG_DEVOPS_PATH)
   : path.resolve(process.cwd(), '..', 'btg-devops.exe');
-
-// Service label strings produced by PP commands — used for scope filtering.
-export const PP_SERVICE_LABELS = new Set([
-  'Power Platform',
-  'PP Environments',
-  'PP Apps',
-  'PP Flows',
-  'Power BI',
-]);
 
 export type Credentials = {
   tenantId: string;
@@ -35,35 +35,6 @@ export function getPPCredentials(base: Credentials): Credentials {
     subscriptionId: base.subscriptionId,
   };
 }
-
-// All available analyze commands
-export const AZURE_COMMANDS = [
-  'appservice-traffic',
-  'storage',
-  'nsg',
-  'acr',
-  'cosmosdb',
-  'keyvault',
-  'functions',
-  'publicip',
-  'appserviceplan',
-  'cognitiveservices',
-  'resourcegroup',
-  'iam',
-  'sp-expiry',
-  'idle',
-] as const;
-
-export const PP_COMMANDS = [
-  'powerplatform',
-  'pp-environments',
-  'pp-apps',
-  'pp-flows',
-  'pp-powerbi',
-] as const;
-
-export const ALL_COMMANDS = [...AZURE_COMMANDS, ...PP_COMMANDS] as const;
-export type Command = typeof ALL_COMMANDS[number];
 
 // Map command → service label for findings
 const SERVICE_LABELS: Record<string, string> = {
