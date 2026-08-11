@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cognitiveservices/armcognitiveservices"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -50,6 +51,7 @@ func init() {
 	cognitiveservicesCmd.Flags().StringVar(&flagSubscriptionID, "subscription-id", "", "Azure Subscription ID (overrides AZURE_SUBSCRIPTION_ID env var)")
 	cognitiveservicesCmd.Flags().StringVar(&flagResourceGroup, "resource-group", "", "Filter by resource group (optional)")
 	cognitiveservicesCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", cognitiveServicesProviderAdapter{})
 }
 
 func runCognitiveServices(cmd *cobra.Command, args []string) error {
@@ -64,9 +66,27 @@ func runCognitiveServices(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computeCognitiveServicesFindings(ctx, cred, subID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printCognitiveServicesTable(report)
+	}
+
+	return nil
+}
+
+func computeCognitiveServicesFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string) (CognitiveServicesReport, error) {
 	accountsClient, err := armcognitiveservices.NewAccountsClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating cognitive services client: %w", err)
+		return CognitiveServicesReport{}, fmt.Errorf("creating cognitive services client: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching Cognitive Services accounts for subscription %s...\n", subID)
@@ -75,7 +95,7 @@ func runCognitiveServices(cmd *cobra.Command, args []string) error {
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return fmt.Errorf("listing cognitive services accounts: %w", err)
+			return CognitiveServicesReport{}, fmt.Errorf("listing cognitive services accounts: %w", err)
 		}
 		accounts = append(accounts, page.Value...)
 	}
@@ -322,17 +342,41 @@ func runCognitiveServices(cmd *cobra.Command, args []string) error {
 		Summary:  summary,
 		Findings: findings,
 	}
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printCognitiveServicesTable(report)
+// ---------- provider registration ----------
+
+type cognitiveServicesProviderAdapter struct{}
+
+func (cognitiveServicesProviderAdapter) Name() string { return "cognitiveservices" }
+
+func (cognitiveServicesProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	subID := getSubscriptionID()
+	if subID == "" {
+		return nil, fmt.Errorf("subscription ID required: set --subscription-id or AZURE_SUBSCRIPTION_ID env var")
 	}
-
-	return nil
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computeCognitiveServicesFindings(ctx, cred, subID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.Finding, len(report.Findings))
+	for i, f := range report.Findings {
+		out[i] = provider.Finding{
+			Provider:       "azure",
+			Service:        "Cognitive Services",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.AccountName,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out, nil
 }
 
 func printCognitiveServicesTable(r CognitiveServicesReport) {

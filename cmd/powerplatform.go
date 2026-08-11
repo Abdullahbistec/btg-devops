@@ -12,6 +12,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -145,6 +146,7 @@ func init() {
 	analyzeCmd.AddCommand(powerplatformCmd)
 	powerplatformCmd.Flags().StringVar(&flagTenantID, "tenant-id", "", "Azure Tenant ID (overrides AZURE_TENANT_ID env var)")
 	powerplatformCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("powerplatform", powerplatformProviderAdapter{})
 }
 
 func getTenantID() string {
@@ -167,18 +169,36 @@ func runPowerPlatform(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computePowerPlatformFindings(ctx, cred, tenantID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printPPTable(report)
+	}
+
+	return nil
+}
+
+func computePowerPlatformFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, tenantID string) (PPReport, error) {
 	tokenResp, err := cred.GetToken(ctx, policy.TokenRequestOptions{
 		Scopes: []string{"https://graph.microsoft.com/.default"},
 	})
 	if err != nil {
-		return fmt.Errorf("acquiring graph api token: %w", err)
+		return PPReport{}, fmt.Errorf("acquiring graph api token: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching Power Platform license data for tenant %s...\n", tenantID)
 
 	skus, err := fetchSubscribedSKUs(ctx, tokenResp.Token)
 	if err != nil {
-		return fmt.Errorf("fetching subscribed SKUs: %w", err)
+		return PPReport{}, fmt.Errorf("fetching subscribed SKUs: %w", err)
 	}
 
 	var ppSKUs []graphSubscribedSKU
@@ -322,17 +342,47 @@ func runPowerPlatform(cmd *cobra.Command, args []string) error {
 		Licenses: licenses,
 		Findings: findings,
 	}
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printPPTable(report)
+// ---------- provider registration ----------
+
+type powerplatformProviderAdapter struct{}
+
+func (powerplatformProviderAdapter) Name() string { return "powerplatform" }
+
+func (powerplatformProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	tenantID := getTenantID()
+	if tenantID == "" {
+		return nil, fmt.Errorf("tenant ID required: set --tenant-id or AZURE_TENANT_ID env var")
 	}
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computePowerPlatformFindings(ctx, cred, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return powerplatformFindingsToProvider(report.Findings), nil
+}
 
-	return nil
+// powerplatformFindingsToProvider is split out from Run() so the conversion
+// is testable without live credentials.
+func powerplatformFindingsToProvider(findings []PPFinding) []provider.Finding {
+	out := make([]provider.Finding, len(findings))
+	for i, f := range findings {
+		out[i] = provider.Finding{
+			Provider:       "powerplatform",
+			Service:        "Power Platform",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.LicenseName,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out
 }
 
 func fetchSubscribedSKUs(ctx context.Context, token string) ([]graphSubscribedSKU, error) {

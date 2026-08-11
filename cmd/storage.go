@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -50,6 +51,7 @@ func init() {
 	storageCmd.Flags().StringVar(&flagSubscriptionID, "subscription-id", "", "Azure Subscription ID (overrides AZURE_SUBSCRIPTION_ID env var)")
 	storageCmd.Flags().StringVar(&flagResourceGroup, "resource-group", "", "Filter by resource group (optional)")
 	storageCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", storageProviderAdapter{})
 }
 
 func runStorage(cmd *cobra.Command, args []string) error {
@@ -64,9 +66,32 @@ func runStorage(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computeStorageFindings(ctx, cred, subID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printStorageTable(report)
+	}
+
+	return nil
+}
+
+// computeStorageFindings holds the unmodified fetch+analyze body previously
+// inline in runStorage. Detection logic below this point is byte-for-byte
+// identical to before — only the function boundary moved, so runStorage's
+// own output is unchanged and this same logic can now also be called by
+// storageProviderAdapter (see below) via the provider registry.
+func computeStorageFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string) (StorageReport, error) {
 	accountsClient, err := armstorage.NewAccountsClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating storage accounts client: %w", err)
+		return StorageReport{}, fmt.Errorf("creating storage accounts client: %w", err)
 	}
 
 	// Fetch all storage accounts
@@ -76,7 +101,7 @@ func runStorage(cmd *cobra.Command, args []string) error {
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return fmt.Errorf("listing storage accounts: %w", err)
+			return StorageReport{}, fmt.Errorf("listing storage accounts: %w", err)
 		}
 		accounts = append(accounts, page.Value...)
 	}
@@ -237,17 +262,49 @@ func runStorage(cmd *cobra.Command, args []string) error {
 		Summary:  summary,
 		Findings: findings,
 	}
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printStorageTable(report)
+// ---------- provider registration ----------
+
+type storageProviderAdapter struct{}
+
+func (storageProviderAdapter) Name() string { return "storage" }
+
+func (storageProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	subID := getSubscriptionID()
+	if subID == "" {
+		return nil, fmt.Errorf("subscription ID required: set --subscription-id or AZURE_SUBSCRIPTION_ID env var")
 	}
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computeStorageFindings(ctx, cred, subID)
+	if err != nil {
+		return nil, err
+	}
+	return storageFindingsToProvider(report.Findings), nil
+}
 
-	return nil
+// storageFindingsToProvider is split out from Run() so the conversion
+// (the actual new logic in this file) is testable without live Azure
+// credentials, per docs/superpowers/specs/2026-08-06-unified-analyzer-interface-design.md's
+// testing approach.
+func storageFindingsToProvider(findings []StorageFinding) []provider.Finding {
+	out := make([]provider.Finding, len(findings))
+	for i, f := range findings {
+		out[i] = provider.Finding{
+			Provider:       "azure",
+			Service:        "Storage",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.StorageAccount,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out
 }
 
 func printStorageTable(r StorageReport) {

@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDB, listAudits } from '@/lib/db';
-import { PP_SERVICE_LABELS, PP_COMMANDS, AZURE_COMMANDS } from '@/lib/btg-runner';
+import { PP_SERVICE_LABELS, HETZNER_SERVICE_LABELS, PP_COMMANDS, AZURE_COMMANDS, HETZNER_COMMANDS } from '@/lib/btg-runner';
 
-// SQL IN-list for PP services — used to scope queries.
-const PP_LIST = [...PP_SERVICE_LABELS].map(s => `'${s.replace(/'/g, "''")}'`).join(',');
+// SQL IN-lists per provider — used to scope queries. "azure" is everything
+// NOT in PP or Hetzner's label sets, rather than its own explicit list,
+// since Azure has no fixed service-label set (new Azure analyzers add new
+// labels here for free); PP and Hetzner both do, so they're excluded by name.
+const PP_LIST      = [...PP_SERVICE_LABELS].map(s => `'${s.replace(/'/g, "''")}'`).join(',');
+const HETZNER_LIST = [...HETZNER_SERVICE_LABELS].map(s => `'${s.replace(/'/g, "''")}'`).join(',');
 
 function buildScopeFilter(scope: string, tableAlias = 'f'): string {
-  if (scope === 'pp')    return `AND ${tableAlias}.service IN (${PP_LIST})`;
-  if (scope === 'azure') return `AND ${tableAlias}.service NOT IN (${PP_LIST})`;
+  if (scope === 'pp')      return `AND ${tableAlias}.service IN (${PP_LIST})`;
+  if (scope === 'hetzner') return `AND ${tableAlias}.service IN (${HETZNER_LIST})`;
+  if (scope === 'azure')   return `AND ${tableAlias}.service NOT IN (${PP_LIST}) AND ${tableAlias}.service NOT IN (${HETZNER_LIST})`;
   return '';
 }
 
@@ -24,7 +29,7 @@ export async function GET(req: NextRequest) {
       const recent = db.prepare(
         `SELECT id, commands_run FROM audits WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 25`
       ).all() as { id: string; commands_run: string }[];
-      const wanted = scope === 'pp' ? PP_COMMANDS : scope === 'azure' ? AZURE_COMMANDS : null;
+      const wanted = scope === 'pp' ? PP_COMMANDS : scope === 'azure' ? AZURE_COMMANDS : scope === 'hetzner' ? HETZNER_COMMANDS : null;
       if (!wanted) {
         resolvedAuditId = recent[0]?.id;
       } else {

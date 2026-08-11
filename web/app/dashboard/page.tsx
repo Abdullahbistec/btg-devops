@@ -1,7 +1,7 @@
 'use client';
 import { Suspense, useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import KPICard from '@/components/KPICard';
 import AssistantPanel from '@/components/AssistantPanel';
@@ -56,9 +56,19 @@ export default function DashboardPage() {
 // ── Inner component — reads search params ──────────────────────────────────
 function DashboardInner() {
   const searchParams = useSearchParams();
+  const router  = useRouter();
   const scope   = searchParams.get('scope')    ?? '';
   const auditId = searchParams.get('audit_id') ?? '';
-  const isPP    = scope === 'pp';
+  const provider: ProviderKey =
+    scope === 'azure' ? 'azure' : scope === 'pp' ? 'pp' : scope === 'hetzner' ? 'hetzner' : 'all';
+  const isPP    = provider === 'pp';
+  const meta    = PROVIDER_META[provider];
+
+  function setProvider(next: ProviderKey) {
+    const qs = new URLSearchParams(searchParams.toString());
+    if (next === 'all') qs.delete('scope'); else qs.set('scope', next);
+    router.replace(`/dashboard?${qs.toString()}`);
+  }
 
   const [data, setData] = useState<DashData | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -92,16 +102,8 @@ function DashboardInner() {
   const pieData = (data?.bySeverity ?? []).map(s => ({
     name: s.severity, value: s.count, fill: SEV_COLOR[s.severity] ?? '#888',
   }));
-  // PP mode: always show all 5 PP services (with 0 if no findings yet)
-  const PP_CHART_ENTRIES = [
-    { svc: 'Power Platform', color: '#00C2FF' },
-    { svc: 'PP Environments', color: '#7B5EA7' },
-    { svc: 'PP Apps',         color: '#FFA502' },
-    { svc: 'PP Flows',        color: '#2ED573' },
-    { svc: 'Power BI',        color: '#F2C811' },
-  ];
-  const serviceData = isPP
-    ? PP_CHART_ENTRIES.map(({ svc, color }) => {
+  const serviceData = meta.chartEntries
+    ? meta.chartEntries.map(({ svc, color }) => {
         const found = (data?.byService ?? []).find(s => s.service === svc);
         return { name: svc, count: found?.count ?? 0, fill: color };
       })
@@ -117,9 +119,7 @@ function DashboardInner() {
   const warnVals  = (data?.trend ?? []).slice(-7).map(t => t.warning_count);
   const infoVals  = (data?.trend ?? []).slice(-7).map(t => t.info_count);
 
-  const title = isPP
-    ? 'BTG DevOps — Power Platform Dashboard'
-    : 'BTG DevOps — Azure Security Dashboard';
+  const title = meta.title;
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
@@ -140,6 +140,7 @@ function DashboardInner() {
                 : 'No audits yet — run your first audit'}
             </div>
           </div>
+          <ProviderFilter active={provider} onChange={setProvider} />
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             {loading && <span style={{ fontSize: 10, color: 'var(--muted)' }}>Loading…</span>}
             <Chip color="var(--good)">● v0.13.0</Chip>
@@ -153,12 +154,12 @@ function DashboardInner() {
           {/* CONTENT */}
           <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
 
-            {/* PP PENDING STATE — shown when scope=pp but no PP findings exist yet */}
+            {/* PP PENDING STATE — shown when the Power Platform provider filter is active but no PP findings exist yet */}
             {isPP && !loading && !data?.ppReady && (
               <PPPendingCard credsConfigured={data?.ppCredsConfigured ?? false} subscriptionId={sub?.id ?? ''} onAuditTriggered={load} />
             )}
 
-            {/* Main content — shown for Azure (always) or PP when data is ready */}
+            {/* Main content — shown for Azure/All (always) or PP when data is ready */}
             {(!isPP || data?.ppReady) && (
               <>
                 {/* KPI ROW */}
@@ -172,7 +173,7 @@ function DashboardInner() {
                   <KPICard label="Warning Findings" value={data?.kpi.warning ?? 0} color="#FFA502" sparkData={warnVals}
                     icon={<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="#FFA502" strokeWidth="1.5"><path d="M6.5 2L1 11h11L6.5 2z"/><path d="M6.5 7V5M6.5 9v.5"/></svg>}
                   />
-                  <KPICard label={isPP ? 'Environments Scanned' : 'Resources Scanned'} value={data?.resourcesScanned ? String(data.resourcesScanned) : '—'} color="#2ED573" sparkData={infoVals}
+                  <KPICard label={meta.kpiLabel} value={data?.resourcesScanned ? String(data.resourcesScanned) : '—'} color="#2ED573" sparkData={infoVals}
                     icon={<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="#2ED573" strokeWidth="1.5"><rect x="1" y="1" width="4.5" height="4.5" rx="1"/><rect x="7.5" y="1" width="4.5" height="4.5" rx="1"/><rect x="1" y="7.5" width="4.5" height="4.5" rx="1"/><rect x="7.5" y="7.5" width="4.5" height="4.5" rx="1"/></svg>}
                   />
                 </div>
@@ -215,12 +216,12 @@ function DashboardInner() {
                     </div>
                   </Card>
 
-                  <Card title={isPP ? 'Findings by PP Analyzer' : 'Findings by Service'} sub="Count per analyzer" color="#00C2FF">
+                  <Card title={meta.chartTitle} sub="Count per analyzer" color="#00C2FF">
                     {serviceData.length > 0 ? (
                       <ResponsiveContainer width="100%" height={155}>
                         <BarChart data={serviceData} layout="vertical" margin={{ top: 0, right: 30, left: 4, bottom: 0 }}>
                           <XAxis type="number" tick={{ fill: '#2A3560', fontSize: 9 }} axisLine={false} tickLine={false} />
-                          <YAxis type="category" dataKey="name" tick={{ fill: '#5B6FA8', fontSize: 10 }} axisLine={false} tickLine={false} width={isPP ? 110 : 90} />
+                          <YAxis type="category" dataKey="name" tick={{ fill: '#5B6FA8', fontSize: 10 }} axisLine={false} tickLine={false} width={meta.yAxisWidth} />
                           <Tooltip contentStyle={{ background: '#0E1333', border: '1px solid #1A2550', borderRadius: 4, fontSize: 11 }} />
                           <Bar dataKey="count" radius={[0, 2, 2, 0]}>
                             {serviceData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
@@ -289,7 +290,7 @@ function DashboardInner() {
                 <AssistantPanel auditId={data?.resolvedAuditId ?? ''} />
 
                 {/* FINDINGS TABLE */}
-                <FindingsCard findings={findings} isPP={isPP} />
+                <FindingsCard findings={findings} svcTabs={meta.svcTabs} label={meta.findingsLabel} />
               </>
             )}
 
@@ -550,6 +551,27 @@ function Card({ title, sub, children, color = '#00C2FF' }: { title: string; sub?
   );
 }
 
+function ProviderFilter({ active, onChange }: { active: ProviderKey; onChange: (key: ProviderKey) => void }) {
+  return (
+    <div style={{ display: 'flex', gap: 3, padding: 3, borderRadius: 6, background: 'var(--card2)', border: '1px solid var(--border)' }}>
+      {PROVIDER_TABS.map(({ key, label }) => {
+        const isActive = active === key;
+        return (
+          <button key={key} onClick={() => onChange(key)} style={{
+            padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 4, cursor: 'pointer',
+            background: isActive ? 'var(--accent)' : 'transparent',
+            border: '1px solid transparent',
+            color: isActive ? '#0A0F2C' : 'var(--muted)',
+            transition: 'all 0.15s ease',
+          }}>
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function Chip({ color, children }: { color: string; children: React.ReactNode }) {
   return (
     <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 3, background: `${color}1A`, color, border: `1px solid ${color}40` }}>
@@ -714,9 +736,103 @@ const PP_SVC_TABS: SvcTabDef[] = [
   { key: 'Power BI',         label: 'Power BI',         match: 'Power BI',         color: '#F2C811' },
 ];
 
-function FindingsCard({ findings, isPP }: { findings: Finding[]; isPP: boolean }) {
-  const svcTabs = isPP ? PP_SVC_TABS : AZURE_SVC_TABS;
+const HETZNER_SVC_TABS: SvcTabDef[] = [
+  { key: 'all',                   label: 'All',                   match: null,                    color: '#A29BFE' },
+  { key: 'Hetzner Servers',       label: 'Servers',                match: 'Hetzner Servers',       color: '#D50C2D' },
+  { key: 'Hetzner Volumes',       label: 'Volumes',                match: 'Hetzner Volumes',       color: '#FF8C42' },
+  { key: 'Hetzner Floating IPs',  label: 'Floating IPs',           match: 'Hetzner Floating IPs',  color: '#4ECDC4' },
+  { key: 'Hetzner Firewalls',     label: 'Firewalls',              match: 'Hetzner Firewalls',     color: '#C44536' },
+  { key: 'Hetzner Certificates',  label: 'Certificates',           match: 'Hetzner Certificates',  color: '#6A0572' },
+];
 
+// All Providers view combines every known service tab behind one filter row.
+const ALL_SVC_TABS: SvcTabDef[] = [
+  { key: 'all', label: 'All', match: null, color: '#A29BFE' },
+  ...AZURE_SVC_TABS.filter(t => t.key !== 'all'),
+  ...PP_SVC_TABS.filter(t => t.key !== 'all'),
+  ...HETZNER_SVC_TABS.filter(t => t.key !== 'all'),
+];
+
+// ── Provider filter — the single source of truth every provider-specific
+// branch (title, KPI label, chart shape, findings tabs) reads from. Adding a
+// future provider means adding one entry here, not a new page/branch.
+type ProviderKey = 'all' | 'azure' | 'pp' | 'hetzner';
+
+const PROVIDER_TABS: { key: ProviderKey; label: string }[] = [
+  { key: 'all',     label: 'All Providers' },
+  { key: 'azure',   label: 'Azure' },
+  { key: 'pp',      label: 'Power Platform' },
+  { key: 'hetzner', label: 'Hetzner' },
+];
+
+interface ProviderMeta {
+  title: string;
+  kpiLabel: string;
+  chartTitle: string;
+  chartEntries: { svc: string; color: string }[] | null; // null = derive top 10 from byService
+  yAxisWidth: number;
+  svcTabs: SvcTabDef[];
+  findingsLabel: string;
+}
+
+// PP mode: always show all 5 PP services (with 0 if no findings yet)
+const PP_CHART_ENTRIES = [
+  { svc: 'Power Platform', color: '#00C2FF' },
+  { svc: 'PP Environments', color: '#7B5EA7' },
+  { svc: 'PP Apps',         color: '#FFA502' },
+  { svc: 'PP Flows',        color: '#2ED573' },
+  { svc: 'Power BI',        color: '#F2C811' },
+];
+
+// Hetzner mode: always show all 5 Hetzner analyzers (with 0 if no findings yet)
+const HETZNER_CHART_ENTRIES = [
+  { svc: 'Hetzner Servers',      color: '#D50C2D' },
+  { svc: 'Hetzner Volumes',      color: '#FF8C42' },
+  { svc: 'Hetzner Floating IPs', color: '#4ECDC4' },
+  { svc: 'Hetzner Firewalls',    color: '#C44536' },
+  { svc: 'Hetzner Certificates', color: '#6A0572' },
+];
+
+const PROVIDER_META: Record<ProviderKey, ProviderMeta> = {
+  all: {
+    title: 'BTG DevOps — Security Dashboard',
+    kpiLabel: 'Resources Scanned',
+    chartTitle: 'Findings by Service',
+    chartEntries: null,
+    yAxisWidth: 90,
+    svcTabs: ALL_SVC_TABS,
+    findingsLabel: 'Latest',
+  },
+  azure: {
+    title: 'BTG DevOps — Azure Security Dashboard',
+    kpiLabel: 'Resources Scanned',
+    chartTitle: 'Findings by Service',
+    chartEntries: null,
+    yAxisWidth: 90,
+    svcTabs: AZURE_SVC_TABS,
+    findingsLabel: 'Latest',
+  },
+  pp: {
+    title: 'BTG DevOps — Power Platform Dashboard',
+    kpiLabel: 'Environments Scanned',
+    chartTitle: 'Findings by PP Analyzer',
+    chartEntries: PP_CHART_ENTRIES,
+    yAxisWidth: 110,
+    svcTabs: PP_SVC_TABS,
+    findingsLabel: 'Power Platform',
+  },
+  hetzner: {
+    title: 'BTG DevOps — Hetzner Cloud Dashboard',
+    kpiLabel: 'Resources Scanned',
+    chartTitle: 'Findings by Hetzner Analyzer',
+    chartEntries: HETZNER_CHART_ENTRIES,
+    yAxisWidth: 110,
+    svcTabs: HETZNER_SVC_TABS,
+    findingsLabel: 'Hetzner',
+  },
+};
+
+function FindingsCard({ findings, svcTabs, label }: { findings: Finding[]; svcTabs: SvcTabDef[]; label: string }) {
   const [sevTab,  setSevTab]  = useState<SevTab>('All');
   const [svcKey,  setSvcKey]  = useState<string>('all');
   const [remTab,  setRemTab]  = useState<string>('all');
@@ -774,7 +890,7 @@ function FindingsCard({ findings, isPP }: { findings: Finding[]; isPP: boolean }
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            {isPP ? 'Power Platform' : 'Latest'} Findings ({tabFindings.length})
+            {label} Findings ({tabFindings.length})
           </div>
           <div style={{ fontSize: 9.5, color: 'var(--muted)', marginTop: 1 }}>
             Showing {Math.min(PAGE, tabFindings.length)} of {tabFindings.length}

@@ -12,6 +12,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v2"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -55,6 +56,7 @@ func init() {
 	appServicePlanCmd.Flags().StringVar(&flagSubscriptionID, "subscription-id", "", "Azure Subscription ID (overrides AZURE_SUBSCRIPTION_ID env var)")
 	appServicePlanCmd.Flags().StringVar(&flagResourceGroup, "resource-group", "", "Filter by resource group (optional)")
 	appServicePlanCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", appServicePlanProviderAdapter{})
 }
 
 func runAppServicePlan(cmd *cobra.Command, args []string) error {
@@ -69,19 +71,36 @@ func runAppServicePlan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computeAppServicePlanFindings(ctx, cred, subID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printASPReport(report)
+	}
+	return nil
+}
+
+func computeAppServicePlanFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string) (ASPReport, error) {
 	planClient, err := armappservice.NewPlansClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating app service plan client: %w", err)
+		return ASPReport{}, fmt.Errorf("creating app service plan client: %w", err)
 	}
 
 	webClient, err := armappservice.NewWebAppsClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating web apps client: %w", err)
+		return ASPReport{}, fmt.Errorf("creating web apps client: %w", err)
 	}
 
 	metricsClient, err := armmonitor.NewMetricsClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating metrics client: %w", err)
+		return ASPReport{}, fmt.Errorf("creating metrics client: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching App Service Plans for subscription %s...\n", subID)
@@ -90,7 +109,7 @@ func runAppServicePlan(cmd *cobra.Command, args []string) error {
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return fmt.Errorf("listing app service plans: %w", err)
+			return ASPReport{}, fmt.Errorf("listing app service plans: %w", err)
 		}
 		plans = append(plans, page.Value...)
 	}
@@ -132,16 +151,41 @@ func runAppServicePlan(cmd *cobra.Command, args []string) error {
 	}
 
 	report := analyzeASPs(ctx, plans, planAppCount, webClient, planClient, metricsClient)
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printASPReport(report)
+// ---------- provider registration ----------
+
+type appServicePlanProviderAdapter struct{}
+
+func (appServicePlanProviderAdapter) Name() string { return "appserviceplan" }
+
+func (appServicePlanProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	subID := getSubscriptionID()
+	if subID == "" {
+		return nil, fmt.Errorf("subscription ID required: set --subscription-id or AZURE_SUBSCRIPTION_ID env var")
 	}
-	return nil
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computeAppServicePlanFindings(ctx, cred, subID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.Finding, len(report.Findings))
+	for i, f := range report.Findings {
+		out[i] = provider.Finding{
+			Provider:       "azure",
+			Service:        "App Service Plan",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.PlanName,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out, nil
 }
 
 // Approximate monthly costs by SKU tier

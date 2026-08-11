@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -97,6 +98,7 @@ func init() {
 	analyzeCmd.AddCommand(ppAppsCmd)
 	ppAppsCmd.Flags().StringVar(&flagTenantID, "tenant-id", "", "Azure Tenant ID (overrides AZURE_TENANT_ID env var)")
 	ppAppsCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("powerplatform", ppAppsProviderAdapter{})
 }
 
 func runPPApps(cmd *cobra.Command, args []string) error {
@@ -112,15 +114,32 @@ func runPPApps(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computePPAppsFindings(ctx, cred, tenantID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printPPAppsTable(report)
+	}
+	return nil
+}
+
+func computePPAppsFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, tenantID string) (PPAppReport, error) {
 	token, err := ppToken(ctx, cred, ppAppsScope)
 	if err != nil {
-		return fmt.Errorf("acquiring power platform token: %w", err)
+		return PPAppReport{}, fmt.Errorf("acquiring power platform token: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching Power Platform environments...\n")
 	envs, err := fetchPPEnvironments(ctx, token)
 	if err != nil {
-		return fmt.Errorf("listing environments: %w", err)
+		return PPAppReport{}, fmt.Errorf("listing environments: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Scanning Power Apps across %d environment(s)...\n", len(envs))
@@ -336,16 +355,48 @@ func runPPApps(cmd *cobra.Command, args []string) error {
 	}
 
 	report := PPAppReport{Summary: summary, Findings: findings}
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printPPAppsTable(report)
+// ---------- provider registration ----------
+
+type ppAppsProviderAdapter struct{}
+
+func (ppAppsProviderAdapter) Name() string { return "pp-apps" }
+
+func (ppAppsProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	tenantID := getTenantID()
+	if tenantID == "" {
+		return nil, fmt.Errorf("tenant ID required: set --tenant-id or AZURE_TENANT_ID env var")
 	}
-	return nil
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computePPAppsFindings(ctx, cred, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return ppAppsFindingsToProvider(report.Findings), nil
+}
+
+// ppAppsFindingsToProvider is split out from Run() so the conversion is
+// testable without live credentials.
+func ppAppsFindingsToProvider(findings []PPAppFinding) []provider.Finding {
+	out := make([]provider.Finding, len(findings))
+	for i, f := range findings {
+		out[i] = provider.Finding{
+			Provider:       "powerplatform",
+			Service:        "PP Apps",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.AppName,
+			Environment:    f.Environment,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out
 }
 
 // orphanedAppDescription builds a human-readable description for an orphaned app,

@@ -17,9 +17,7 @@ const NAV = [
   {
     group: 'Analysis',
     items: [
-      { href: '/dashboard?scope=azure', label: '▸ Azure',         icon: null },
-      { href: '/dashboard?scope=pp',    label: '▸ Power Platform', icon: null },
-      { href: '/power-automate',        label: '▸ Power Automate', icon: null },
+      { href: '/power-automate', label: '▸ Power Automate', icon: null },
     ],
   },
   {

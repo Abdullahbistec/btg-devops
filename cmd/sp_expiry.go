@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -90,6 +91,7 @@ func init() {
 	analyzeCmd.AddCommand(spExpiryCmd)
 	spExpiryCmd.Flags().StringVar(&flagTenantID, "tenant-id", "", "Azure Tenant ID (overrides AZURE_TENANT_ID env var)")
 	spExpiryCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", spExpiryProviderAdapter{})
 }
 
 func runSPExpiry(cmd *cobra.Command, args []string) error {
@@ -105,15 +107,32 @@ func runSPExpiry(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computeSPExpiryFindings(ctx, cred, tenantID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printSPExpiryTable(report)
+	}
+	return nil
+}
+
+func computeSPExpiryFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, tenantID string) (SPExpiryReport, error) {
 	token, err := ppToken(ctx, cred, "https://graph.microsoft.com/.default")
 	if err != nil {
-		return fmt.Errorf("acquiring graph token: %w", err)
+		return SPExpiryReport{}, fmt.Errorf("acquiring graph token: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching app registrations...\n")
 	apps, err := fetchAppsForExpiry(ctx, token)
 	if err != nil {
-		return fmt.Errorf("listing app registrations: %w", err)
+		return SPExpiryReport{}, fmt.Errorf("listing app registrations: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Scanning credentials across %d app(s)...\n", len(apps))
@@ -161,16 +180,41 @@ func runSPExpiry(cmd *cobra.Command, args []string) error {
 	}
 
 	report := SPExpiryReport{Summary: summary, Findings: findings}
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printSPExpiryTable(report)
+// ---------- provider registration ----------
+
+type spExpiryProviderAdapter struct{}
+
+func (spExpiryProviderAdapter) Name() string { return "sp-expiry" }
+
+func (spExpiryProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	tenantID := getTenantID()
+	if tenantID == "" {
+		return nil, fmt.Errorf("tenant ID required: set --tenant-id or AZURE_TENANT_ID env var")
 	}
-	return nil
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computeSPExpiryFindings(ctx, cred, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.Finding, len(report.Findings))
+	for i, f := range report.Findings {
+		out[i] = provider.Finding{
+			Provider:       "azure",
+			Service:        "SP Expiry",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.CredentialName,
+			Description:    fmt.Sprintf("%s — %s", f.AppName, f.ExpiresOn),
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out, nil
 }
 
 func evalCredExpiry(appName, appID, credName, credType, endDateTime string, summary *SPExpirySummary, now time.Time) *SPExpiryFinding {

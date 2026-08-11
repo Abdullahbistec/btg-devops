@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -57,6 +58,7 @@ func init() {
 	analyzeCmd.AddCommand(ppEnvironmentsCmd)
 	ppEnvironmentsCmd.Flags().StringVar(&flagTenantID, "tenant-id", "", "Azure Tenant ID (overrides AZURE_TENANT_ID env var)")
 	ppEnvironmentsCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("powerplatform", ppEnvironmentsProviderAdapter{})
 }
 
 func runPPEnvironments(cmd *cobra.Command, args []string) error {
@@ -72,15 +74,32 @@ func runPPEnvironments(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computePPEnvironmentsFindings(ctx, cred, tenantID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printPPEnvTable(report)
+	}
+	return nil
+}
+
+func computePPEnvironmentsFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, tenantID string) (PPEnvReport, error) {
 	token, err := ppToken(ctx, cred, ppAppsScope)
 	if err != nil {
-		return fmt.Errorf("acquiring power platform token: %w", err)
+		return PPEnvReport{}, fmt.Errorf("acquiring power platform token: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching Power Platform environments for tenant %s...\n", tenantID)
 	envs, err := fetchPPEnvironments(ctx, token)
 	if err != nil {
-		return fmt.Errorf("listing environments: %w", err)
+		return PPEnvReport{}, fmt.Errorf("listing environments: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "Found %d environment(s). Fetching DLP policies...\n", len(envs))
 
@@ -279,16 +298,50 @@ func runPPEnvironments(cmd *cobra.Command, args []string) error {
 	}
 
 	report := PPEnvReport{Summary: summary, Findings: findings}
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printPPEnvTable(report)
+// ---------- provider registration ----------
+
+type ppEnvironmentsProviderAdapter struct{}
+
+func (ppEnvironmentsProviderAdapter) Name() string { return "pp-environments" }
+
+func (ppEnvironmentsProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	tenantID := getTenantID()
+	if tenantID == "" {
+		return nil, fmt.Errorf("tenant ID required: set --tenant-id or AZURE_TENANT_ID env var")
 	}
-	return nil
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computePPEnvironmentsFindings(ctx, cred, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return ppEnvironmentsFindingsToProvider(report.Findings), nil
+}
+
+// ppEnvironmentsFindingsToProvider is split out from Run() so the conversion
+// is testable without live credentials. PPEnvFinding's resource identifier
+// is Environment (there's no separate named resource), the non-obvious
+// mapping this test coverage exists to pin down.
+func ppEnvironmentsFindingsToProvider(findings []PPEnvFinding) []provider.Finding {
+	out := make([]provider.Finding, len(findings))
+	for i, f := range findings {
+		out[i] = provider.Finding{
+			Provider:       "powerplatform",
+			Service:        "PP Environments",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.Environment,
+			Environment:    f.Environment,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out
 }
 
 func printPPEnvTable(r PPEnvReport) {

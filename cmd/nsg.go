@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v4"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -51,6 +52,7 @@ func init() {
 	nsgCmd.Flags().StringVar(&flagSubscriptionID, "subscription-id", "", "Azure Subscription ID (overrides AZURE_SUBSCRIPTION_ID env var)")
 	nsgCmd.Flags().StringVar(&flagResourceGroup, "resource-group", "", "Filter by resource group (optional)")
 	nsgCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", nsgProviderAdapter{})
 }
 
 // Management ports considered dangerous when open to the internet
@@ -77,9 +79,27 @@ func runNSG(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computeNSGFindings(ctx, cred, subID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printNSGTable(report)
+	}
+
+	return nil
+}
+
+func computeNSGFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string) (NSGReport, error) {
 	nsgClient, err := armnetwork.NewSecurityGroupsClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating NSG client: %w", err)
+		return NSGReport{}, fmt.Errorf("creating NSG client: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching NSGs for subscription %s...\n", subID)
@@ -88,7 +108,7 @@ func runNSG(cmd *cobra.Command, args []string) error {
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return fmt.Errorf("listing NSGs: %w", err)
+			return NSGReport{}, fmt.Errorf("listing NSGs: %w", err)
 		}
 		nsgs = append(nsgs, page.Value...)
 	}
@@ -249,17 +269,41 @@ func runNSG(cmd *cobra.Command, args []string) error {
 		Summary:  summary,
 		Findings: findings,
 	}
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printNSGTable(report)
+// ---------- provider registration ----------
+
+type nsgProviderAdapter struct{}
+
+func (nsgProviderAdapter) Name() string { return "nsg" }
+
+func (nsgProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	subID := getSubscriptionID()
+	if subID == "" {
+		return nil, fmt.Errorf("subscription ID required: set --subscription-id or AZURE_SUBSCRIPTION_ID env var")
 	}
-
-	return nil
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computeNSGFindings(ctx, cred, subID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.Finding, len(report.Findings))
+	for i, f := range report.Findings {
+		out[i] = provider.Finding{
+			Provider:       "azure",
+			Service:        "NSG",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.NSGName,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out, nil
 }
 
 // ---------- port parsing helpers ----------

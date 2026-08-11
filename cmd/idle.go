@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -79,6 +80,7 @@ func init() {
 	idleCmd.Flags().IntVar(&flagIdleDays, "days", 30, "Number of past days to analyze (e.g. 7, 30, 90)")
 	idleCmd.Flags().StringVar(&flagSubscriptionID, "subscription-id", "", "Azure Subscription ID (overrides AZURE_SUBSCRIPTION_ID env var)")
 	idleCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", idleProviderAdapter{})
 }
 
 // ---------- entry point ----------
@@ -95,12 +97,38 @@ func runIdle(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, idleResources, highWasteResources, mediumWasteResources, total, err := computeIdleFindings(ctx, cred, subID, flagIdleType, flagIdleDays)
+	if err != nil {
+		return err
+	}
+
+	if flagOutput == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	}
+
+	if total == 0 {
+		fmt.Println("No supported resources found in subscription.")
+		return nil
+	}
+
+	return printIdleReport(idleResources, highWasteResources, mediumWasteResources, total, flagIdleDays)
+}
+
+// computeIdleFindings holds the unmodified fetch+analyze body previously
+// inline in runIdle. Detection logic is byte-for-byte identical to before —
+// only the function boundary moved and output decisions (JSON encode vs.
+// table print) were lifted into runIdle, so runIdle's own behavior for every
+// flagOutput/total-resources combination is unchanged. Returns the report
+// plus the three severity buckets runIdle's table path still needs.
+func computeIdleFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID, idleType string, days int) (IdleReport, []idleEntry, []idleEntry, []idleEntry, int, error) {
 	// Resolve which ARM types to scan
 	var typesToScan []string
-	if flagIdleType != "" {
-		armType, ok := usageTypeAliases[strings.ToLower(flagIdleType)]
+	if idleType != "" {
+		armType, ok := usageTypeAliases[strings.ToLower(idleType)]
 		if !ok {
-			return fmt.Errorf("unknown type %q\n\nSupported types: cosmosdb, storage, appserviceplan, keyvault, acr, appservice, functions, publicip, cognitiveservices", flagIdleType)
+			return IdleReport{}, nil, nil, nil, 0, fmt.Errorf("unknown type %q\n\nSupported types: cosmosdb, storage, appserviceplan, keyvault, acr, appservice, functions, publicip, cognitiveservices", idleType)
 		}
 		typesToScan = []string{armType}
 	} else {
@@ -117,7 +145,7 @@ func runIdle(_ *cobra.Command, _ []string) error {
 
 	client, err := armresources.NewClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating resources client: %w", err)
+		return IdleReport{}, nil, nil, nil, 0, fmt.Errorf("creating resources client: %w", err)
 	}
 
 	var resources []resourceEntry
@@ -145,23 +173,10 @@ func runIdle(_ *cobra.Command, _ []string) error {
 
 	total := len(resources)
 	if total == 0 {
-		if flagOutput == "json" {
-			summary := IdleSummary{
-				TotalScanned:       0,
-				IdleCount:          0,
-				HighWasteCount:     0,
-				MediumWasteCount:   0,
-				FindingsBySeverity: map[string]int{},
-			}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			return enc.Encode(IdleReport{Summary: summary, Findings: nil})
-		}
-		fmt.Println("No supported resources found in subscription.")
-		return nil
+		return IdleReport{Summary: IdleSummary{FindingsBySeverity: map[string]int{}}, Findings: nil}, nil, nil, nil, 0, nil
 	}
 
-	fmt.Fprintf(os.Stderr, "Scanning %d resource(s) for idle/waste (last %d days)...\n\n", total, flagIdleDays)
+	fmt.Fprintf(os.Stderr, "Scanning %d resource(s) for idle/waste (last %d days)...\n\n", total, days)
 
 	// Analyze each resource
 	var idleResources []idleEntry
@@ -175,7 +190,7 @@ func runIdle(_ *cobra.Command, _ []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "[%d/%d] Checking %s...\n", i+1, total, res.name)
 
-		report, err := buildUsageReport(ctx, subID, cred, res.id, res.name, res.resourceType, res.rg, flagIdleDays)
+		report, err := buildUsageReport(ctx, subID, cred, res.id, res.name, res.resourceType, res.rg, days)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  skipped: %v\n", err)
 			continue
@@ -203,33 +218,67 @@ func runIdle(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	if flagOutput == "json" {
-		summary := IdleSummary{
-			TotalScanned:       total,
-			IdleCount:          len(idleResources),
-			HighWasteCount:     len(highWasteResources),
-			MediumWasteCount:   len(mediumWasteResources),
-			FindingsBySeverity: map[string]int{},
-		}
-		for _, e := range idleResources {
-			summary.TotalWastedPerMonth += e.report.TotalCost
-		}
-		for _, e := range highWasteResources {
-			summary.TotalWastedPerMonth += e.report.TotalCost
-		}
-		for _, e := range mediumWasteResources {
-			summary.TotalWastedPerMonth += e.report.TotalCost
-		}
-		for _, f := range findings {
-			summary.FindingsBySeverity[string(f.Severity)]++
-		}
-
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(IdleReport{Summary: summary, Findings: findings})
+	summary := IdleSummary{
+		TotalScanned:       total,
+		IdleCount:          len(idleResources),
+		HighWasteCount:     len(highWasteResources),
+		MediumWasteCount:   len(mediumWasteResources),
+		FindingsBySeverity: map[string]int{},
+	}
+	for _, e := range idleResources {
+		summary.TotalWastedPerMonth += e.report.TotalCost
+	}
+	for _, e := range highWasteResources {
+		summary.TotalWastedPerMonth += e.report.TotalCost
+	}
+	for _, e := range mediumWasteResources {
+		summary.TotalWastedPerMonth += e.report.TotalCost
+	}
+	for _, f := range findings {
+		summary.FindingsBySeverity[string(f.Severity)]++
 	}
 
-	return printIdleReport(idleResources, highWasteResources, mediumWasteResources, total, flagIdleDays)
+	return IdleReport{Summary: summary, Findings: findings}, idleResources, highWasteResources, mediumWasteResources, total, nil
+}
+
+// ---------- provider registration ----------
+
+type idleProviderAdapter struct{}
+
+func (idleProviderAdapter) Name() string { return "idle" }
+
+func (idleProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	subID := getSubscriptionID()
+	if subID == "" {
+		return nil, fmt.Errorf("subscription ID required: set --subscription-id or AZURE_SUBSCRIPTION_ID env var")
+	}
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, _, _, _, _, err := computeIdleFindings(ctx, cred, subID, flagIdleType, flagIdleDays)
+	if err != nil {
+		return nil, err
+	}
+	return idleFindingsToProvider(report.Findings), nil
+}
+
+// idleFindingsToProvider is split out from Run() so the conversion is
+// testable without live Azure credentials.
+func idleFindingsToProvider(findings []IdleFinding) []provider.Finding {
+	out := make([]provider.Finding, len(findings))
+	for i, f := range findings {
+		out[i] = provider.Finding{
+			Provider:       "azure",
+			Service:        "Idle & Waste",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.ResourceName,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out
 }
 
 // ---------- table output ----------

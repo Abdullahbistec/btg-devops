@@ -55,32 +55,6 @@ const (
 	ppBIBase    = "https://api.powerbi.com"
 )
 
-// ---------- PP-4: Analyzer interface ----------
-
-// PPAnalyzer is the interface all Power Platform analysis commands implement.
-// Each command (pp-environments, pp-apps, pp-flows, pp-powerbi) follows this
-// contract: acquire a token for its scope, call its API, and return
-// severity-classified findings in a consistent report structure.
-type PPAnalyzer interface {
-	// Name returns the analyzer's display name used in output headers.
-	Name() string
-	// Scope returns the OAuth scope required to authenticate with the target API.
-	Scope() string
-	// Analyze runs all checks and returns severity-classified findings.
-	Analyze(ctx context.Context, token string) ([]PPBaseFinding, error)
-}
-
-// PPBaseFinding is the shared finding shape across all Power Platform analyzers.
-// Command-specific finding structs mirror this layout and are JSON-compatible.
-type PPBaseFinding struct {
-	Severity       Severity `json:"severity"`
-	Category       string   `json:"category"`
-	Resource       string   `json:"resource"`
-	Environment    string   `json:"environment"`
-	Description    string   `json:"description"`
-	Recommendation string   `json:"recommendation"`
-}
-
 // ---------- PP-6: Risky connector catalogue ----------
 
 // ppHighRiskConnectors maps connector API name → human reason.

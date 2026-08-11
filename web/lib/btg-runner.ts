@@ -1,14 +1,17 @@
 import { execFile } from 'child_process';
 import path from 'path';
-import { AZURE_COMMANDS, PP_COMMANDS, ALL_COMMANDS, PP_SERVICE_LABELS } from './btg-commands';
+import { AZURE_COMMANDS, PP_COMMANDS, HETZNER_COMMANDS, ALL_COMMANDS, PP_SERVICE_LABELS, HETZNER_SERVICE_LABELS } from './btg-commands';
 import type { Command } from './btg-commands';
 
 // Re-exported for existing server-side consumers (API routes, audit-executor.ts).
 // Client components must import these from '@/lib/btg-commands' directly —
 // this file is server-only (imports 'child_process') and cannot be bundled
 // for the browser.
-export { AZURE_COMMANDS, PP_COMMANDS, ALL_COMMANDS, PP_SERVICE_LABELS };
+export { AZURE_COMMANDS, PP_COMMANDS, HETZNER_COMMANDS, ALL_COMMANDS, PP_SERVICE_LABELS, HETZNER_SERVICE_LABELS };
 export type { Command };
+
+export const isHetznerCommand = (cmd: string): boolean =>
+  (HETZNER_COMMANDS as readonly string[]).includes(cmd);
 
 const BTG_PATH = process.env.BTG_DEVOPS_PATH
   ? path.resolve(process.cwd(), process.env.BTG_DEVOPS_PATH)
@@ -57,6 +60,11 @@ const SERVICE_LABELS: Record<string, string> = {
   'pp-apps': 'PP Apps',
   'pp-flows': 'PP Flows',
   'pp-powerbi': 'Power BI',
+  'hetzner-servers': 'Hetzner Servers',
+  'hetzner-volumes': 'Hetzner Volumes',
+  'hetzner-floatingips': 'Hetzner Floating IPs',
+  'hetzner-firewalls': 'Hetzner Firewalls',
+  'hetzner-certificates': 'Hetzner Certificates',
 };
 
 export interface NormalizedFinding {
@@ -97,6 +105,12 @@ interface RawFinding {
   // SP Expiry fields
   credential_name?: string;
   app_id?: string;
+  // Hetzner fields
+  server_name?: string;
+  volume_name?: string;
+  name?: string;
+  firewall_name?: string;
+  cert_name?: string;
 }
 
 function extractResource(raw: RawFinding): string {
@@ -105,7 +119,8 @@ function extractResource(raw: RawFinding): string {
     raw.function_app_name || raw.ip_name || raw.vault_name ||
     raw.nsg_name || raw.registry_name || raw.group_name ||
     raw.resource_group || raw.flow_name ||
-    raw.workspace || raw.workspace_name || raw.sku_id || raw.credential_name || ''
+    raw.workspace || raw.workspace_name || raw.sku_id || raw.credential_name ||
+    raw.server_name || raw.volume_name || raw.firewall_name || raw.cert_name || raw.name || ''
   );
 }
 
@@ -143,6 +158,8 @@ function extractResourceCount(summary: Record<string, unknown> | undefined): num
     'total_function_apps', 'total_pips', 'total_plans', 'total_resource_groups',
     'total_assignments', 'total_apps', 'total_environments', 'total_flows',
     'total_workspaces', 'total_credentials', 'total_skus',
+    'total_servers', 'total_volumes', 'total_floating_ips',
+    'total_firewalls', 'total_certificates',
   ];
   for (const k of keys) {
     if (typeof summary[k] === 'number' && (summary[k] as number) > 0) return summary[k] as number;
@@ -157,14 +174,20 @@ export interface CommandResult {
 
 export async function runSingleCommand(
   command: Command,
-  credentials: Credentials
+  credentials: Credentials,
+  hcloudToken?: string
 ): Promise<CommandResult> {
-  const env = {
-    AZURE_TENANT_ID: credentials.tenantId,
-    AZURE_CLIENT_ID: credentials.clientId,
-    AZURE_CLIENT_SECRET: credentials.clientSecret,
-    AZURE_SUBSCRIPTION_ID: credentials.subscriptionId,
-  };
+  // Hetzner auth is a single project token, not an Azure-AD service
+  // principal — it doesn't fit the Credentials shape at all, so it gets its
+  // own env var rather than being shoehorned into tenantId/clientId/etc.
+  const env: Record<string, string> = isHetznerCommand(command)
+    ? { HCLOUD_TOKEN: hcloudToken || process.env.HCLOUD_TOKEN || '' }
+    : {
+        AZURE_TENANT_ID: credentials.tenantId,
+        AZURE_CLIENT_ID: credentials.clientId,
+        AZURE_CLIENT_SECRET: credentials.clientSecret,
+        AZURE_SUBSCRIPTION_ID: credentials.subscriptionId,
+      };
 
   // `idle` sleeps 1s per resource plus 2-3 serialized Azure API calls each,
   // across up to 8 resource types — on large subscriptions this can exceed
@@ -203,12 +226,14 @@ export async function runAllCommands(
   commands: Command[],
   credentials: Credentials,
   ppCredentials?: Credentials,
+  hcloudToken?: string,
   onProgress?: (cmd: string, count: number) => void
-): Promise<{ findings: NormalizedFinding[]; ran: Command[]; errors: string[]; ppErrors: string[]; resourcesScanned: number }> {
+): Promise<{ findings: NormalizedFinding[]; ran: Command[]; errors: string[]; ppErrors: string[]; hetznerErrors: string[]; resourcesScanned: number }> {
   const allFindings: NormalizedFinding[] = [];
   const ran: Command[] = [];
   const errors: string[] = [];
   const ppErrors: string[] = [];
+  const hetznerErrors: string[] = [];
   let resourcesScanned = 0;
 
   const isPP = (cmd: string): boolean =>
@@ -217,17 +242,18 @@ export async function runAllCommands(
   for (const cmd of commands) {
     const creds = isPP(cmd) ? (ppCredentials ?? credentials) : credentials;
     try {
-      const result = await runSingleCommand(cmd, creds);
+      const result = await runSingleCommand(cmd, creds, hcloudToken);
       allFindings.push(...result.findings);
       resourcesScanned += result.resourcesScanned;
       ran.push(cmd);
       onProgress?.(cmd, result.findings.length);
     } catch (e) {
       const msg = `${cmd}: ${(e as Error).message}`;
-      if (isPP(cmd)) ppErrors.push(msg);
+      if (isHetznerCommand(cmd)) hetznerErrors.push(msg);
+      else if (isPP(cmd)) ppErrors.push(msg);
       else errors.push(msg);
     }
   }
 
-  return { findings: allFindings, ran, errors, ppErrors, resourcesScanned };
+  return { findings: allFindings, ran, errors, ppErrors, hetznerErrors, resourcesScanned };
 }

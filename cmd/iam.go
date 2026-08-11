@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -81,6 +82,7 @@ func init() {
 	analyzeCmd.AddCommand(iamCmd)
 	iamCmd.Flags().StringVar(&flagSubscriptionID, "subscription-id", "", "Azure Subscription ID (overrides AZURE_SUBSCRIPTION_ID env var)")
 	iamCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", iamProviderAdapter{})
 }
 
 func runIAM(cmd *cobra.Command, args []string) error {
@@ -95,14 +97,33 @@ func runIAM(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computeIAMFindings(ctx, cred, subID)
+	if err != nil {
+		return err
+	}
+
+	// Output
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printIAMTable(report)
+	}
+
+	return nil
+}
+
+func computeIAMFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string) (IAMReport, error) {
 	// Clients
 	raClient, err := armauthorization.NewRoleAssignmentsClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating role assignments client: %w", err)
+		return IAMReport{}, fmt.Errorf("creating role assignments client: %w", err)
 	}
 	rdClient, err := armauthorization.NewRoleDefinitionsClient(cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating role definitions client: %w", err)
+		return IAMReport{}, fmt.Errorf("creating role definitions client: %w", err)
 	}
 
 	subScope := fmt.Sprintf("/subscriptions/%s", subID)
@@ -114,7 +135,7 @@ func runIAM(cmd *cobra.Command, args []string) error {
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return fmt.Errorf("listing role assignments: %w", err)
+			return IAMReport{}, fmt.Errorf("listing role assignments: %w", err)
 		}
 		rawAssignments = append(rawAssignments, page.Value...)
 	}
@@ -126,7 +147,7 @@ func runIAM(cmd *cobra.Command, args []string) error {
 	for rdPager.More() {
 		page, err := rdPager.NextPage(ctx)
 		if err != nil {
-			return fmt.Errorf("listing role definitions: %w", err)
+			return IAMReport{}, fmt.Errorf("listing role definitions: %w", err)
 		}
 		for _, rd := range page.Value {
 			if rd.ID != nil && rd.Properties != nil && rd.Properties.RoleName != nil {
@@ -373,18 +394,49 @@ func runIAM(cmd *cobra.Command, args []string) error {
 		Findings:    findings,
 		CustomRoles: customRoles,
 	}
+	return report, nil
+}
 
-	// Output
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printIAMTable(report)
+// ---------- provider registration ----------
+
+type iamProviderAdapter struct{}
+
+func (iamProviderAdapter) Name() string { return "iam" }
+
+func (iamProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	subID := getSubscriptionID()
+	if subID == "" {
+		return nil, fmt.Errorf("subscription ID required: set --subscription-id or AZURE_SUBSCRIPTION_ID env var")
 	}
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computeIAMFindings(ctx, cred, subID)
+	if err != nil {
+		return nil, err
+	}
+	return iamFindingsToProvider(report.Findings), nil
+}
 
-	return nil
+// iamFindingsToProvider is split out from Run() so the conversion is
+// testable without live Azure credentials. IAM findings are keyed by
+// Principal (not a named resource like every other analyzer), which is the
+// non-obvious case this test coverage specifically exists to pin down.
+func iamFindingsToProvider(findings []Finding) []provider.Finding {
+	out := make([]provider.Finding, len(findings))
+	for i, f := range findings {
+		out[i] = provider.Finding{
+			Provider:       "azure",
+			Service:        "IAM",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.Principal,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out
 }
 
 func printIAMTable(r IAMReport) {

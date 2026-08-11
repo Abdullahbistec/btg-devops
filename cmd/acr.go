@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerregistry/armcontainerregistry"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -49,6 +50,7 @@ func init() {
 	acrCmd.Flags().StringVar(&flagSubscriptionID, "subscription-id", "", "Azure Subscription ID (overrides AZURE_SUBSCRIPTION_ID env var)")
 	acrCmd.Flags().StringVar(&flagResourceGroup, "resource-group", "", "Filter by resource group (optional)")
 	acrCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", acrProviderAdapter{})
 }
 
 func runACR(cmd *cobra.Command, args []string) error {
@@ -63,9 +65,27 @@ func runACR(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computeACRFindings(ctx, cred, subID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printACRTable(report)
+	}
+
+	return nil
+}
+
+func computeACRFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string) (ACRReport, error) {
 	registriesClient, err := armcontainerregistry.NewRegistriesClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating registries client: %w", err)
+		return ACRReport{}, fmt.Errorf("creating registries client: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching container registries for subscription %s...\n", subID)
@@ -74,7 +94,7 @@ func runACR(cmd *cobra.Command, args []string) error {
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return fmt.Errorf("listing container registries: %w", err)
+			return ACRReport{}, fmt.Errorf("listing container registries: %w", err)
 		}
 		registries = append(registries, page.Value...)
 	}
@@ -292,17 +312,41 @@ func runACR(cmd *cobra.Command, args []string) error {
 		Summary:  summary,
 		Findings: findings,
 	}
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printACRTable(report)
+// ---------- provider registration ----------
+
+type acrProviderAdapter struct{}
+
+func (acrProviderAdapter) Name() string { return "acr" }
+
+func (acrProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	subID := getSubscriptionID()
+	if subID == "" {
+		return nil, fmt.Errorf("subscription ID required: set --subscription-id or AZURE_SUBSCRIPTION_ID env var")
 	}
-
-	return nil
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computeACRFindings(ctx, cred, subID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.Finding, len(report.Findings))
+	for i, f := range report.Findings {
+		out[i] = provider.Finding{
+			Provider:       "azure",
+			Service:        "ACR",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.RegistryName,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out, nil
 }
 
 func printACRTable(r ACRReport) {

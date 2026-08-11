@@ -7,7 +7,7 @@ import {
   failAudit,
   getDB,
 } from '@/lib/db';
-import { runAllCommands, ALL_COMMANDS, Command, getPPCredentials } from '@/lib/btg-runner';
+import { runAllCommands, ALL_COMMANDS, Command, getPPCredentials, isHetznerCommand } from '@/lib/btg-runner';
 import { sendAuditSummaryEmail, sendScheduleFailureEmail, getNotificationRecipients } from '@/lib/mailer';
 
 export class AuditExecutorError extends Error {}
@@ -37,17 +37,23 @@ export async function executeAudit(
     subscriptionId: sub.subscription_id || process.env.AZURE_SUBSCRIPTION_ID || '',
   };
 
-  if (!credentials.tenantId || !credentials.clientId || !credentials.clientSecret) {
+  const cmdsToRun: Command[] = commands ?? [...ALL_COMMANDS];
+
+  // Azure credentials are only required if the run actually includes a
+  // non-Hetzner command — a Hetzner-only scan (single project API token,
+  // no Azure-AD service principal involved) must not be blocked on them.
+  const needsAzureCreds = cmdsToRun.some(c => !isHetznerCommand(c));
+  if (needsAzureCreds && (!credentials.tenantId || !credentials.clientId || !credentials.clientSecret)) {
     throw new AuditExecutorError('Missing Azure credentials. Set AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET in .env.local');
   }
 
-  const cmdsToRun: Command[] = commands ?? [...ALL_COMMANDS];
   const auditName = name || `Audit ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`;
   const audit = createAudit(resolvedSubId, auditName, cmdsToRun);
 
   const ppCredentials = getPPCredentials(credentials);
+  const hcloudToken = process.env.HCLOUD_TOKEN || '';
 
-  runAllCommands(cmdsToRun, credentials, ppCredentials, (cmd, _count) => {
+  runAllCommands(cmdsToRun, credentials, ppCredentials, hcloudToken, (cmd, _count) => {
     const done = cmdsToRun.indexOf(cmd) + 1;
     updateAuditStep(audit.id, cmd, done);
   })

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v2"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -63,6 +64,7 @@ func init() {
 	functionsCmd.Flags().StringVar(&flagSubscriptionID, "subscription-id", "", "Azure Subscription ID (overrides AZURE_SUBSCRIPTION_ID env var)")
 	functionsCmd.Flags().StringVar(&flagResourceGroup, "resource-group", "", "Filter by resource group (optional)")
 	functionsCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", functionsProviderAdapter{})
 }
 
 func runFunctions(cmd *cobra.Command, args []string) error {
@@ -77,14 +79,32 @@ func runFunctions(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computeFunctionsFindings(ctx, cred, subID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printFunctionsTable(report)
+	}
+
+	return nil
+}
+
+func computeFunctionsFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string) (FunctionsReport, error) {
 	webClient, err := armappservice.NewWebAppsClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating web apps client: %w", err)
+		return FunctionsReport{}, fmt.Errorf("creating web apps client: %w", err)
 	}
 
 	plansClient, err := armappservice.NewPlansClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating app service plans client: %w", err)
+		return FunctionsReport{}, fmt.Errorf("creating app service plans client: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching Function Apps for subscription %s...\n", subID)
@@ -94,7 +114,7 @@ func runFunctions(cmd *cobra.Command, args []string) error {
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return fmt.Errorf("listing web apps: %w", err)
+			return FunctionsReport{}, fmt.Errorf("listing web apps: %w", err)
 		}
 		for _, app := range page.Value {
 			if app.Kind != nil && strings.Contains(strings.ToLower(*app.Kind), "functionapp") {
@@ -395,17 +415,41 @@ func runFunctions(cmd *cobra.Command, args []string) error {
 		Summary:  summary,
 		Findings: findings,
 	}
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printFunctionsTable(report)
+// ---------- provider registration ----------
+
+type functionsProviderAdapter struct{}
+
+func (functionsProviderAdapter) Name() string { return "functions" }
+
+func (functionsProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	subID := getSubscriptionID()
+	if subID == "" {
+		return nil, fmt.Errorf("subscription ID required: set --subscription-id or AZURE_SUBSCRIPTION_ID env var")
 	}
-
-	return nil
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computeFunctionsFindings(ctx, cred, subID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.Finding, len(report.Findings))
+	for i, f := range report.Findings {
+		out[i] = provider.Finding{
+			Provider:       "azure",
+			Service:        "Functions",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.FunctionApp,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out, nil
 }
 
 // extractLastSegment returns the last path segment of a resource ID.

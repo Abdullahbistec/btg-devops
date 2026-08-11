@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDB } from '@/lib/db';
-import { PP_SERVICE_LABELS, PP_COMMANDS, AZURE_COMMANDS } from '@/lib/btg-runner';
+import { PP_SERVICE_LABELS, HETZNER_SERVICE_LABELS, PP_COMMANDS, AZURE_COMMANDS, HETZNER_COMMANDS } from '@/lib/btg-runner';
 import type { Finding } from '@/lib/db';
 
-const PP_LIST = [...PP_SERVICE_LABELS].map(s => `'${s.replace(/'/g, "''")}'`).join(',');
+const PP_LIST      = [...PP_SERVICE_LABELS].map(s => `'${s.replace(/'/g, "''")}'`).join(',');
+const HETZNER_LIST = [...HETZNER_SERVICE_LABELS].map(s => `'${s.replace(/'/g, "''")}'`).join(',');
 
 /** Most recent completed audit whose commands_run overlaps the given scope. */
 function resolveLatestAuditForScope(scope: string): string | undefined {
@@ -12,7 +13,7 @@ function resolveLatestAuditForScope(scope: string): string | undefined {
     `SELECT id, commands_run FROM audits WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 25`
   ).all() as { id: string; commands_run: string }[];
 
-  const wanted = scope === 'pp' ? PP_COMMANDS : scope === 'azure' ? AZURE_COMMANDS : null;
+  const wanted = scope === 'pp' ? PP_COMMANDS : scope === 'azure' ? AZURE_COMMANDS : scope === 'hetzner' ? HETZNER_COMMANDS : null;
   if (!wanted) return recent[0]?.id;
 
   for (const audit of recent) {
@@ -37,8 +38,9 @@ export async function GET(req: NextRequest) {
     if (auditId)  clauses.push(`audit_id = '${auditId.replace(/'/g, "''")}'`);
     if (severity) clauses.push(`severity = '${severity.replace(/'/g, "''")}'`);
     if (remediationStatus) clauses.push(`remediation_status = '${remediationStatus.replace(/'/g, "''")}'`);
-    if (scope === 'pp')    clauses.push(`service IN (${PP_LIST})`);
-    if (scope === 'azure') clauses.push(`service NOT IN (${PP_LIST})`);
+    if (scope === 'pp')      clauses.push(`service IN (${PP_LIST})`);
+    if (scope === 'hetzner') clauses.push(`service IN (${HETZNER_LIST})`);
+    if (scope === 'azure')   clauses.push(`service NOT IN (${PP_LIST}) AND service NOT IN (${HETZNER_LIST})`);
 
     // When scoped to a specific audit, return everything for it — a severity-sorted
     // cap here previously let one high-volume service (e.g. many Critical "Orphaned

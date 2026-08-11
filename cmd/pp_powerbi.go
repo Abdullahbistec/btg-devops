@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -93,6 +94,7 @@ func init() {
 	analyzeCmd.AddCommand(ppPowerBICmd)
 	ppPowerBICmd.Flags().StringVar(&flagTenantID, "tenant-id", "", "Azure Tenant ID (overrides AZURE_TENANT_ID env var)")
 	ppPowerBICmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("powerplatform", ppPowerBIProviderAdapter{})
 }
 
 func runPPPowerBI(cmd *cobra.Command, args []string) error {
@@ -108,15 +110,32 @@ func runPPPowerBI(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computePPPowerBIFindings(ctx, cred, tenantID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printPPBITable(report)
+	}
+	return nil
+}
+
+func computePPPowerBIFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, tenantID string) (PPBIReport, error) {
 	token, err := ppToken(ctx, cred, ppBIScope)
 	if err != nil {
-		return fmt.Errorf("acquiring power bi token: %w", err)
+		return PPBIReport{}, fmt.Errorf("acquiring power bi token: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching Power BI workspaces for tenant %s...\n", tenantID)
 	groups, err := fetchPBIWorkspaces(ctx, token)
 	if err != nil {
-		return fmt.Errorf("listing workspaces: %w", err)
+		return PPBIReport{}, fmt.Errorf("listing workspaces: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "Found %d workspace(s). Analyzing...\n", len(groups))
 
@@ -229,16 +248,47 @@ func runPPPowerBI(cmd *cobra.Command, args []string) error {
 	}
 
 	report := PPBIReport{Summary: summary, Findings: findings}
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printPPBITable(report)
+// ---------- provider registration ----------
+
+type ppPowerBIProviderAdapter struct{}
+
+func (ppPowerBIProviderAdapter) Name() string { return "pp-powerbi" }
+
+func (ppPowerBIProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	tenantID := getTenantID()
+	if tenantID == "" {
+		return nil, fmt.Errorf("tenant ID required: set --tenant-id or AZURE_TENANT_ID env var")
 	}
-	return nil
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computePPPowerBIFindings(ctx, cred, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return ppPowerBIFindingsToProvider(report.Findings), nil
+}
+
+// ppPowerBIFindingsToProvider is split out from Run() so the conversion is
+// testable without live credentials.
+func ppPowerBIFindingsToProvider(findings []PPBIFinding) []provider.Finding {
+	out := make([]provider.Finding, len(findings))
+	for i, f := range findings {
+		out[i] = provider.Finding{
+			Provider:       "powerplatform",
+			Service:        "Power BI",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.Workspace,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out
 }
 
 func fetchPBIWorkspaces(ctx context.Context, token string) ([]pbiGroup, error) {

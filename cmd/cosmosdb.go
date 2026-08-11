@@ -11,6 +11,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cosmos/armcosmos/v3"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -50,6 +51,7 @@ func init() {
 	cosmosdbCmd.Flags().StringVar(&flagSubscriptionID, "subscription-id", "", "Azure Subscription ID (overrides AZURE_SUBSCRIPTION_ID env var)")
 	cosmosdbCmd.Flags().StringVar(&flagResourceGroup, "resource-group", "", "Filter by resource group (optional)")
 	cosmosdbCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", cosmosdbProviderAdapter{})
 }
 
 func runCosmosDB(cmd *cobra.Command, args []string) error {
@@ -64,9 +66,27 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computeCosmosDBFindings(ctx, cred, subID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printCosmosDBTable(report)
+	}
+
+	return nil
+}
+
+func computeCosmosDBFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string) (CosmosDBReport, error) {
 	accountsClient, err := armcosmos.NewDatabaseAccountsClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating cosmos db client: %w", err)
+		return CosmosDBReport{}, fmt.Errorf("creating cosmos db client: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching Cosmos DB accounts for subscription %s...\n", subID)
@@ -75,7 +95,7 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return fmt.Errorf("listing cosmos db accounts: %w", err)
+			return CosmosDBReport{}, fmt.Errorf("listing cosmos db accounts: %w", err)
 		}
 		accounts = append(accounts, page.Value...)
 	}
@@ -406,17 +426,41 @@ func runCosmosDB(cmd *cobra.Command, args []string) error {
 		Summary:  summary,
 		Findings: findings,
 	}
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printCosmosDBTable(report)
+// ---------- provider registration ----------
+
+type cosmosdbProviderAdapter struct{}
+
+func (cosmosdbProviderAdapter) Name() string { return "cosmosdb" }
+
+func (cosmosdbProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	subID := getSubscriptionID()
+	if subID == "" {
+		return nil, fmt.Errorf("subscription ID required: set --subscription-id or AZURE_SUBSCRIPTION_ID env var")
 	}
-
-	return nil
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computeCosmosDBFindings(ctx, cred, subID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.Finding, len(report.Findings))
+	for i, f := range report.Findings {
+		out[i] = provider.Finding{
+			Provider:       "azure",
+			Service:        "Cosmos DB",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.AccountName,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out, nil
 }
 
 func printCosmosDBTable(r CosmosDBReport) {

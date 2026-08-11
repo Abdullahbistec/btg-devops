@@ -13,6 +13,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armlocks"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -54,6 +55,7 @@ func init() {
 	analyzeCmd.AddCommand(resourceGroupCmd)
 	resourceGroupCmd.Flags().StringVar(&flagSubscriptionID, "subscription-id", "", "Azure Subscription ID (overrides AZURE_SUBSCRIPTION_ID env var)")
 	resourceGroupCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", resourceGroupProviderAdapter{})
 }
 
 // Naming convention: lowercase alphanumeric with hyphens, starting with a letter or "rg-" prefix
@@ -74,19 +76,36 @@ func runResourceGroup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computeResourceGroupFindings(ctx, cred, subID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printRGReport(report)
+	}
+	return nil
+}
+
+func computeResourceGroupFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string) (RGReport, error) {
 	rgClient, err := armresources.NewResourceGroupsClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating resource groups client: %w", err)
+		return RGReport{}, fmt.Errorf("creating resource groups client: %w", err)
 	}
 
 	resClient, err := armresources.NewClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating resources client: %w", err)
+		return RGReport{}, fmt.Errorf("creating resources client: %w", err)
 	}
 
 	locksClient, err := armlocks.NewManagementLocksClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating locks client: %w", err)
+		return RGReport{}, fmt.Errorf("creating locks client: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching Resource Groups for subscription %s...\n", subID)
@@ -102,7 +121,7 @@ func runResourceGroup(cmd *cobra.Command, args []string) error {
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return fmt.Errorf("listing resource groups: %w", err)
+			return RGReport{}, fmt.Errorf("listing resource groups: %w", err)
 		}
 		for _, rg := range page.Value {
 			tags := map[string]*string{}
@@ -211,15 +230,41 @@ func runResourceGroup(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printRGReport(report)
+	return report, nil
+}
+
+// ---------- provider registration ----------
+
+type resourceGroupProviderAdapter struct{}
+
+func (resourceGroupProviderAdapter) Name() string { return "resourcegroup" }
+
+func (resourceGroupProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	subID := getSubscriptionID()
+	if subID == "" {
+		return nil, fmt.Errorf("subscription ID required: set --subscription-id or AZURE_SUBSCRIPTION_ID env var")
 	}
-	return nil
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computeResourceGroupFindings(ctx, cred, subID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.Finding, len(report.Findings))
+	for i, f := range report.Findings {
+		out[i] = provider.Finding{
+			Provider:       "azure",
+			Service:        "Resource Groups",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.ResourceGroup,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out, nil
 }
 
 func isRGEmpty(ctx context.Context, client *armresources.Client, rgName string) (bool, error) {

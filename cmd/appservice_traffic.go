@@ -12,6 +12,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v2"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -48,6 +49,26 @@ func init() {
 	appserviceTrafficCmd.Flags().StringVar(&flagSubscriptionID, "subscription-id", "", "Azure Subscription ID (overrides AZURE_SUBSCRIPTION_ID env var)")
 	appserviceTrafficCmd.Flags().StringVar(&flagResourceGroup, "resource-group", "", "Filter by resource group (optional)")
 	appserviceTrafficCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", appserviceTrafficProviderAdapter{})
+}
+
+// ---------- provider registration ----------
+
+// appserviceTrafficProviderAdapter is a deliberate no-op, not a wrapper
+// around runAppServiceTraffic's logic. This command's JSON output is a bare
+// array (enc.Encode(reports), see runAppServiceTraffic below), not the
+// {summary, findings} shape every other analyzer produces — so it already
+// contributes zero findings to the existing `analyze all` command today
+// (its heuristic JSON parser expects an object with a "findings" key and
+// silently gets nothing from a bare array). This adapter reproduces that
+// exact existing behavior rather than fetching live traffic data and
+// discarding it, or inventing a new finding shape this command has never had.
+type appserviceTrafficProviderAdapter struct{}
+
+func (appserviceTrafficProviderAdapter) Name() string { return "appservice-traffic" }
+
+func (appserviceTrafficProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	return nil, nil
 }
 
 func getSubscriptionID() string {

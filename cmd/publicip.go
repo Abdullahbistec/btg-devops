@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v4"
+	"github.com/chanbistec/btg-devops/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -54,6 +55,7 @@ func init() {
 	publicIPCmd.Flags().StringVar(&flagSubscriptionID, "subscription-id", "", "Azure Subscription ID (overrides AZURE_SUBSCRIPTION_ID env var)")
 	publicIPCmd.Flags().StringVar(&flagResourceGroup, "resource-group", "", "Filter by resource group (optional)")
 	publicIPCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	provider.Register("azure", publicIPProviderAdapter{})
 }
 
 func runPublicIP(cmd *cobra.Command, args []string) error {
@@ -68,9 +70,26 @@ func runPublicIP(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
+	report, err := computePublicIPFindings(ctx, cred, subID)
+	if err != nil {
+		return err
+	}
+
+	switch flagOutput {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	default:
+		printPublicIPReport(report)
+	}
+	return nil
+}
+
+func computePublicIPFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string) (PublicIPReport, error) {
 	pipClient, err := armnetwork.NewPublicIPAddressesClient(subID, cred, nil)
 	if err != nil {
-		return fmt.Errorf("creating public IP client: %w", err)
+		return PublicIPReport{}, fmt.Errorf("creating public IP client: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching Public IP addresses for subscription %s...\n", subID)
@@ -79,7 +98,7 @@ func runPublicIP(cmd *cobra.Command, args []string) error {
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return fmt.Errorf("listing public IPs: %w", err)
+			return PublicIPReport{}, fmt.Errorf("listing public IPs: %w", err)
 		}
 		pips = append(pips, page.Value...)
 	}
@@ -101,16 +120,41 @@ func runPublicIP(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "Found %d Public IP addresses. Analyzing...\n", len(pips))
 
 	report := analyzePublicIPs(pips)
+	return report, nil
+}
 
-	switch flagOutput {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(report)
-	default:
-		printPublicIPReport(report)
+// ---------- provider registration ----------
+
+type publicIPProviderAdapter struct{}
+
+func (publicIPProviderAdapter) Name() string { return "publicip" }
+
+func (publicIPProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) {
+	subID := getSubscriptionID()
+	if subID == "" {
+		return nil, fmt.Errorf("subscription ID required: set --subscription-id or AZURE_SUBSCRIPTION_ID env var")
 	}
-	return nil
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("azure auth failed: %w", err)
+	}
+	report, err := computePublicIPFindings(ctx, cred, subID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.Finding, len(report.Findings))
+	for i, f := range report.Findings {
+		out[i] = provider.Finding{
+			Provider:       "azure",
+			Service:        "Public IP",
+			Severity:       provider.Severity(f.Severity),
+			Category:       f.Category,
+			Resource:       f.PIPName,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+		}
+	}
+	return out, nil
 }
 
 // Approximate monthly cost for an unattached Standard SKU static PIP
