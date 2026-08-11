@@ -1,0 +1,78 @@
+name: Scheduled Azure Audit
+
+on:
+  schedule:
+    # Runs every day at 07:30 UTC nominally — GitHub Actions' own scheduling
+    # delay means this has actually fired anywhere from ~08:00 to ~12:00 UTC
+    # in practice, so don't rely on this lining up with the analyzer
+    # routine's 08:00 UTC daily cron. That's no longer load-bearing anyway:
+    # collect fires the analyzer immediately via its /fire endpoint right
+    # after queuing analysis requests (see triggerAnalyzerRoutine in
+    # cmd/collect.go) — the routine's own daily cron is now just a fallback
+    # in case that immediate trigger fails for some reason.
+    - cron: '30 7 * * *'
+  workflow_dispatch:
+    inputs:
+      trigger_label:
+        description: 'Trigger type (leave as "manual" for manual runs)'
+        required: false
+        default: 'manual'
+      subscription_id:
+        description: 'Audit only this subscription ID (leave blank to audit all active subscriptions)'
+        required: false
+        default: ''
+
+jobs:
+  collect:
+    name: Collect Azure Resource Data
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: CLI Engine
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache: true
+          cache-dependency-path: CLI Engine/go.sum
+
+      - name: Build CLI
+        run: go build -o btg-devops .
+
+      - name: Determine trigger type
+        id: trigger
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "type=scheduled" >> $GITHUB_OUTPUT
+          else
+            echo "type=${{ github.event.inputs.trigger_label || 'manual' }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run audit collection
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SECRET_PROVIDER: ${{ secrets.SECRET_PROVIDER }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          # Fires the btg-devops-mcp-analyzer routine immediately after this
+          # run queues analysis requests, instead of waiting for its own
+          # daily cron — see triggerAnalyzerRoutine in cmd/collect.go. If
+          # this secret isn't set, collect just logs a note and continues;
+          # the routine's daily schedule still picks the work up eventually.
+          ROUTINE_TRIGGER_TOKEN: ${{ secrets.ROUTINE_TRIGGER_TOKEN }}
+        run: |
+          ./btg-devops collect \
+            --trigger "${{ steps.trigger.outputs.type }}" \
+            --subscription-id "${{ github.event.inputs.subscription_id }}"
+
+      - name: Report failure
+        if: failure()
+        run: |
+          echo "::error::Azure audit collection failed. Check logs above for details."

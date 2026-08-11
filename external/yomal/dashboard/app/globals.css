@@ -1,0 +1,265 @@
+@import "tailwindcss";
+
+/* ── design tokens ─────────────────────────────────────────── */
+/* Premium dark-mode fintech palette — purple/violet/indigo/cyan on a deep
+   purple base (#1B1830), per the design brief. Nearly every component reads
+   these variables rather than hardcoded colors, so this cascades app-wide. */
+:root {
+  --sidebar-bg: #161329;
+  --bg: #1b1830;
+  --card: #2a243f;
+  --card-hover: #332c4d;
+  --hover: rgba(255, 255, 255, 0.05);
+  --input-bg: rgba(255, 255, 255, 0.04);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --radius: 20px;
+  --shadow-card: 0 6px 20px -10px rgba(0, 0, 0, 0.45);
+  --shadow-glow: 0 0 32px rgba(139, 92, 246, 0.22);
+  --t1: #ffffff;
+  --t2: #9ca3af;
+  --t3: #7c7a94;
+  --t4: #5b5875;
+  --acc: #8b5cf6;
+  --acc-2: #a855f7;
+  --cyan: #38bdf8;
+  --acc-soft: rgba(139, 92, 246, 0.14);
+  --panel: #241f38;
+  --chart-grid: rgba(255, 255, 255, 0.05);
+  --good: #10b981;
+  --warn: #f59e0b;
+  --bad: #ef4444;
+}
+
+html.light {
+  --sidebar-bg: #ffffff;
+  --bg: #f1f5f9;
+  --card: #ffffff;
+  --card-hover: #f8fafc;
+  --hover: rgba(15, 23, 42, 0.04);
+  --input-bg: rgba(15, 23, 42, 0.03);
+  --border: rgba(15, 23, 42, 0.08);
+  --border-strong: rgba(15, 23, 42, 0.14);
+  --t1: #1e293b;
+  --t2: #64748b;
+  --t3: #94a3b8;
+  --t4: #b2bdcc;
+  --acc: #7c3aed;
+  --acc-2: #a855f7;
+  --cyan: #0ea5e9;
+  --acc-soft: rgba(124, 58, 237, 0.08);
+  --panel: #ffffff;
+  --chart-grid: rgba(15, 23, 42, 0.06);
+  --shadow-card: 0 8px 24px -14px rgba(15, 23, 42, 0.18);
+  --shadow-glow: 0 0 24px rgba(124, 58, 237, 0.12);
+  --good: #10b981;
+  --warn: #f59e0b;
+  --bad: #ef4444;
+}
+
+/* ── Tailwind theme extension (Tailwind v4) ─────────────────── */
+@theme {
+  --color-surface-1: var(--sidebar-bg);
+  --color-surface-2: var(--bg);
+  --color-surface-3: var(--card);
+  --color-surface-4: var(--card-hover);
+}
+
+/* ── base ───────────────────────────────────────────────────── */
+@layer base {
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--t1);
+    font-family: var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .t1 { color: var(--t1); }
+  .t2 { color: var(--t2); }
+  .t3 { color: var(--t3); }
+  .t4 { color: var(--t4); }
+  .acc { color: var(--acc); }
+}
+
+/* ── components ─────────────────────────────────────────────── */
+@layer components {
+  .glass {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+  }
+
+  .field {
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: var(--t1);
+    padding: 0.625rem 0.875rem;
+    width: 100%;
+    font-size: 0.875rem;
+    transition: border-color 0.15s;
+    outline: none;
+  }
+  .field:focus { border-color: var(--acc); }
+  .field::placeholder { color: var(--t4); }
+
+  select {
+    background-color: var(--panel);
+    color: var(--t1);
+    cursor: pointer;
+  }
+  select option {
+    background: var(--panel);
+    color: var(--t1);
+  }
+  select option:disabled { color: var(--t4); }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--acc) 0%, var(--acc-2) 100%);
+    color: #ffffff;
+    border: none;
+    border-radius: 10px;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s, box-shadow 0.15s, transform 0.15s;
+  }
+  .btn-primary:hover:not(:disabled) { opacity: 0.92; box-shadow: 0 0 20px rgba(139, 92, 246, 0.35); transform: translateY(-1px); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--t2);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .btn-ghost:hover { background: var(--hover); color: var(--t1); }
+
+  .btn-danger {
+    background: transparent;
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .btn-danger:hover { background: rgba(239, 68, 68, 0.08); }
+
+  .bdg {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .bdg-info    { background: rgba(56, 189, 248, 0.14);  color: var(--cyan); }
+  .bdg-success { background: rgba(16, 185, 129, 0.14);  color: var(--good); }
+  .bdg-warning { background: rgba(245, 158, 11, 0.14);  color: var(--warn); }
+  .bdg-error   { background: rgba(239, 68, 68, 0.14);   color: var(--bad); }
+  .bdg-primary { background: var(--acc-soft);           color: var(--acc); }
+  .bdg-purple  { background: rgba(168, 85, 247, 0.14);  color: var(--acc-2); }
+  .bdg-muted   { background: rgba(156, 163, 175, 0.14); color: var(--t2); }
+
+  /* Skips layout/paint for sections until they're near the viewport —
+     meaningfully cheaper scrolling on long, chart-heavy pages. */
+  .cv-auto {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 420px;
+  }
+
+  /* Scrollable but no visible scrollbar track (legend lists, mismatch panels). */
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+
+  .row-hover { transition: background 0.12s; }
+  .row-hover:hover { background: var(--hover); }
+
+  .animate-fade-in  { animation: fadeIn 0.2s ease-out; }
+  .animate-scale-in { animation: scaleIn 0.2s ease-out; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes scaleIn {
+    from { opacity: 0; transform: scale(0.97); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  @keyframes shimmer {
+    from { background-position: 200% 0; }
+    to   { background-position: -200% 0; }
+  }
+
+  .skeleton {
+    background: linear-gradient(90deg, var(--input-bg) 25%, var(--hover) 50%, var(--input-bg) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  .glass-hover { transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease; }
+  .glass-hover:hover {
+    transform: translateY(-2px) scale(1.006);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-glow), var(--shadow-card);
+  }
+
+  .row-hover:hover td:first-child { box-shadow: inset 2px 0 0 var(--acc); }
+
+  /* ── chart chrome: range filter pills + glowing active-dot ripple ── */
+  .chart-range-btn {
+    background: transparent;
+    border: none;
+    color: var(--t3);
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 0.24rem 0.6rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .chart-range-btn:hover { color: var(--t1); }
+  .chart-range-btn[data-active="true"] {
+    background: linear-gradient(135deg, var(--acc) 0%, var(--acc-2) 100%);
+    color: #ffffff;
+  }
+
+  @keyframes chartRipple {
+    0%   { transform: scale(0.5); opacity: 0.55; }
+    100% { transform: scale(2.4); opacity: 0; }
+  }
+  .chart-ripple {
+    animation: chartRipple 1.5s ease-out infinite;
+    transform-box: fill-box;
+  }
+
+  .stagger > * { animation: fadeIn 0.2s ease-out both; }
+  .stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger > *:nth-child(2) { animation-delay: 40ms; }
+  .stagger > *:nth-child(3) { animation-delay: 80ms; }
+  .stagger > *:nth-child(4) { animation-delay: 120ms; }
+  .stagger > *:nth-child(5) { animation-delay: 160ms; }
+  .stagger > *:nth-child(6) { animation-delay: 200ms; }
+  .stagger > *:nth-child(7) { animation-delay: 240ms; }
+  .stagger > *:nth-child(8) { animation-delay: 280ms; }
+}

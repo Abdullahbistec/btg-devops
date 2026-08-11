@@ -1,0 +1,14 @@
+High-value features (proposed earlier, still unbuilt)
+Security Exposure panel — deterministic checks computed from data you already collect: NSG rules open to the internet (0.0.0.0/0 on port 22/3389), storage accounts without HTTPS-only, public blob access enabled, public IP inventory. Unlike AI findings, these are exact field reads — no LLM, no cost, always accurate. This is probably the single most valuable unbuilt feature for a DevOps tool.
+Region Distribution + cross-region mismatch flag — your own project spec's flagship example (data in one region, compute in another). Fields confirmed available.
+Real notifications — the header bell is decorative. Wire it to: audit failed, new Critical finding, spend spike vs previous audit.
+Findings lifecycle — findings currently just accumulate. Add resolve/dismiss status, and dedupe when the same issue appears across audits — so you can track "is this getting fixed?" over time. (Also fixes a real bug-in-waiting: re-running analysis after clearing cache duplicates findings rows.)
+
+
+
+Still valid from before, in case you want a reminder
+Region distribution + cross-region cost/latency mismatch flag
+Findings resolve/dismiss lifecycle (track "is this actually getting fixed over time")
+LLM retry/fallback on 429s
+Real notifications (Teams webhook, since you're an Azure shop, would fit naturally)
+Export findings as PDF/CSV
