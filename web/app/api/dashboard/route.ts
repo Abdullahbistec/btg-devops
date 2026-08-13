@@ -91,10 +91,17 @@ export async function GET(req: NextRequest) {
 
     const recentAudits = listAudits().slice(0, 8);
 
-    // Resources scanned — sum from the resolved audit (or all audits if none specified)
+    // Resources scanned — sum from the resolved audit; sum across every
+    // completed audit only for the unscoped "All Providers" view with no
+    // audit_id given. A specific scope (azure/pp/hetzner) that found no
+    // matching audit must report 0, not silently fall back to a sum across
+    // every other provider's audits too — that produced a nonsensical
+    // "31362 resources scanned" on a Hetzner view with zero Hetzner audits.
     const resourcesRow = resolvedAuditId
       ? db.prepare(`SELECT resources_scanned FROM audits WHERE id = ?`).get(resolvedAuditId) as { resources_scanned: number } | undefined
-      : db.prepare(`SELECT SUM(resources_scanned) as resources_scanned FROM audits WHERE status = 'completed'`).get() as { resources_scanned: number } | undefined;
+      : !scope
+      ? db.prepare(`SELECT SUM(resources_scanned) as resources_scanned FROM audits WHERE status = 'completed'`).get() as { resources_scanned: number } | undefined
+      : undefined;
     const resourcesScanned = resourcesRow?.resources_scanned ?? 0;
 
     // PP readiness: at least one PP finding exists (any audit, any time)
