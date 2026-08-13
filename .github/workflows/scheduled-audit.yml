@@ -1,0 +1,78 @@
+name: Scheduled Governance Audit
+
+# Runs the analyzers on a fixed schedule instead of ad hoc/manual re-runs —
+# this is what actually addresses "Azure hits the rate limit" (spacing runs
+# out), not a code change. Azure SDK calls already retry 429s with backoff
+# by default; this just stops runs from stacking on top of each other.
+on:
+  schedule:
+    - cron: '0 6 * * *'   # once daily, 06:00 UTC
+  workflow_dispatch: {}    # manual "Run workflow" button, same job
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build CLI
+        run: go build -o btg-devops .
+
+      - name: Run Azure analyzers
+        if: ${{ secrets.AZURE_TENANT_ID != '' }}
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: ./btg-devops analyze all --scope azure --output json > azure-findings.json
+        continue-on-error: true
+
+      - name: Run Power Platform analyzers
+        if: ${{ secrets.AZURE_TENANT_ID != '' || secrets.BTG_PP_TENANT_ID != '' }}
+        env:
+          AZURE_TENANT_ID: ${{ secrets.BTG_PP_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.BTG_PP_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.BTG_PP_CLIENT_SECRET || secrets.AZURE_CLIENT_SECRET }}
+        run: ./btg-devops analyze all --scope pp --output json > pp-findings.json
+        continue-on-error: true
+
+      - name: Run Hetzner analyzers
+        if: ${{ secrets.HCLOUD_TOKEN != '' }}
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./btg-devops analyze hetzner --output json > hetzner-findings.json
+        continue-on-error: true
+
+      - name: Upload findings as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-findings-${{ github.run_id }}
+          path: |
+            azure-findings.json
+            pp-findings.json
+            hetzner-findings.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # No-ops cleanly (exit 0) until DASHBOARD_BASE_URL is configured —
+      # nothing is deployed publicly yet, so this stays inert by design.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Push results into the live dashboard, if deployed
+        env:
+          DASHBOARD_BASE_URL: ${{ vars.DASHBOARD_BASE_URL }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: node scripts/run-scheduled-audit.js
+
+      - name: Report failure
+        if: failure()
+        run: echo "::error::Scheduled governance audit had a failing step — check the logs above."
