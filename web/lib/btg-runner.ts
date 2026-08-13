@@ -101,7 +101,8 @@ interface RawFinding {
   app_name?: string;
   workspace?: string;
   workspace_name?: string;
-  sku_id?: string;
+  license_name?: string;
+  sku_part_number?: string;
   // SP Expiry fields
   credential_name?: string;
   app_id?: string;
@@ -119,8 +120,13 @@ function extractResource(raw: RawFinding): string {
     raw.function_app_name || raw.ip_name || raw.vault_name ||
     raw.nsg_name || raw.registry_name || raw.group_name ||
     raw.resource_group || raw.flow_name ||
-    raw.workspace || raw.workspace_name || raw.sku_id || raw.credential_name ||
-    raw.server_name || raw.volume_name || raw.firewall_name || raw.cert_name || raw.name || ''
+    raw.workspace || raw.workspace_name ||
+    raw.license_name || raw.sku_part_number || raw.credential_name ||
+    raw.server_name || raw.volume_name || raw.firewall_name || raw.cert_name || raw.name ||
+    // pp-environments findings have no other identifying field — without this,
+    // every pp-environments finding's resource comes back blank (documented
+    // in docs/consolidation-plan.md §2.2 / provider-extension-plan.md §1.9).
+    raw.environment || ''
   );
 }
 

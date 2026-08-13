@@ -14,3 +14,7 @@ web/tsconfig.tsbuildinfo
 
 # Subagent-driven-development scratch workspaces
 .superpowers/
+
+# scripts/pp-governance-agent.js output — real customer findings, never committed
+/out/
+/state/

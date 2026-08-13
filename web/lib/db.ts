@@ -90,6 +90,22 @@ function initSchema(db: DatabaseSync) {
     );
     CREATE INDEX IF NOT EXISTS idx_users_email  ON users(email);
     CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+
+    -- Async AI-analysis requests, picked up by a scheduled Claude Code
+    -- routine polling through the MCP server (cmd/mcp.go --http) instead of
+    -- a synchronous, metered LLM call. See docs/ai-analysis-routine-setup.md.
+    CREATE TABLE IF NOT EXISTS analysis_requests (
+      id            TEXT PRIMARY KEY,
+      audit_id      TEXT NOT NULL,
+      scope         TEXT DEFAULT 'all',
+      status        TEXT DEFAULT 'pending',
+      summary       TEXT DEFAULT '',
+      error_message TEXT DEFAULT '',
+      requested_at  TEXT DEFAULT (datetime('now')),
+      completed_at  TEXT,
+      FOREIGN KEY (audit_id) REFERENCES audits(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_analysis_requests_status ON analysis_requests(status);
   `);
 
   // Migrations
@@ -313,6 +329,47 @@ export function updateUserStatus(id: string, status: string, approvedBy: string)
 
 export function deleteUser(id: string): void {
   getDB().prepare('DELETE FROM users WHERE id = ?').run(id);
+}
+
+// ── Analysis requests (async AI analysis via the MCP + Claude Code routine) ────
+
+export interface AnalysisRequest {
+  id: string;
+  audit_id: string;
+  scope: string;
+  status: 'pending' | 'done' | 'failed';
+  summary: string;
+  error_message: string;
+  requested_at: string;
+  completed_at: string | null;
+}
+
+export function createAnalysisRequest(auditId: string, scope: string): AnalysisRequest {
+  const id = uuidv4();
+  getDB().prepare(`
+    INSERT INTO analysis_requests (id, audit_id, scope) VALUES (?, ?, ?)
+  `).run(id, auditId, scope);
+  return getAnalysisRequest(id)!;
+}
+
+export function getAnalysisRequest(id: string): AnalysisRequest | null {
+  return (getDB().prepare('SELECT * FROM analysis_requests WHERE id = ?').get(id) ?? null) as unknown as AnalysisRequest | null;
+}
+
+export function listPendingAnalysisRequests(): AnalysisRequest[] {
+  return getDB().prepare(`SELECT * FROM analysis_requests WHERE status = 'pending' ORDER BY requested_at`).all() as unknown as AnalysisRequest[];
+}
+
+export function completeAnalysisRequest(id: string, summary: string): void {
+  getDB().prepare(`
+    UPDATE analysis_requests SET status = 'done', summary = ?, completed_at = datetime('now') WHERE id = ?
+  `).run(summary, id);
+}
+
+export function failAnalysisRequest(id: string, message: string): void {
+  getDB().prepare(`
+    UPDATE analysis_requests SET status = 'failed', error_message = ?, completed_at = datetime('now') WHERE id = ?
+  `).run(message, id);
 }
 
 // ── Dashboard aggregates ───────────────────────────────────────────────────────

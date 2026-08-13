@@ -6,23 +6,26 @@ interface Message {
   text: string;
 }
 
+const POLL_INTERVAL_MS = 4000;
+const POLL_TIMEOUT_MS = 10 * 60 * 1000; // routine polls every few minutes — give it real headroom
+
 export default function AssistantPanel({ auditId }: { auditId: string }) {
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+  const [statusNote, setStatusNote] = useState('');
 
-  async function send(mode: 'chat' | 'summary') {
-    const q = mode === 'chat' ? question.trim() : '';
-    if (mode === 'chat' && !q) return;
-
-    if (mode === 'chat') setMessages(m => [...m, { role: 'user', text: q }]);
+  async function sendChat() {
+    const q = question.trim();
+    if (!q) return;
+    setMessages(m => [...m, { role: 'user', text: q }]);
     setQuestion('');
     setLoading(true);
     try {
       const res = await fetch('/api/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ auditId, mode, question: q }),
+        body: JSON.stringify({ auditId, mode: 'chat', question: q }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Assistant request failed');
@@ -34,6 +37,46 @@ export default function AssistantPanel({ auditId }: { auditId: string }) {
     }
   }
 
+  /** Unlike chat, Summarize doesn't call an LLM synchronously — it queues a
+   * request that a scheduled Claude Code routine picks up via the MCP
+   * server (cmd/mcp.go --http), then polls for the result. See
+   * docs/ai-analysis-routine-setup.md. */
+  async function sendSummary() {
+    setLoading(true);
+    setStatusNote('Queued — waiting for the analysis routine to pick this up…');
+    try {
+      const createRes = await fetch('/api/analysis-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auditId, scope: 'all' }),
+      });
+      const created = await createRes.json();
+      if (!createRes.ok) throw new Error(created.error || 'Could not queue analysis');
+
+      const deadline = Date.now() + POLL_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+        const pollRes = await fetch(`/api/analysis-requests/${created.id}`);
+        const polled = await pollRes.json();
+        if (!pollRes.ok) throw new Error(polled.error || 'Could not check analysis status');
+
+        if (polled.status === 'done') {
+          setMessages(m => [...m, { role: 'assistant', text: polled.summary }]);
+          return;
+        }
+        if (polled.status === 'failed') {
+          throw new Error(polled.error_message || 'Analysis failed');
+        }
+      }
+      throw new Error('Analysis is taking longer than expected — the routine may not be running.');
+    } catch (e) {
+      setMessages(m => [...m, { role: 'error', text: (e as Error).message }]);
+    } finally {
+      setStatusNote('');
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="glass" style={{ borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -41,7 +84,7 @@ export default function AssistantPanel({ auditId }: { auditId: string }) {
           AI Assistant
         </span>
         <button
-          onClick={() => send('summary')}
+          onClick={sendSummary}
           disabled={loading}
           style={{
             fontSize: 11, fontWeight: 600, padding: '5px 10px', borderRadius: 6,
@@ -65,14 +108,14 @@ export default function AssistantPanel({ auditId }: { auditId: string }) {
             {m.text}
           </div>
         ))}
-        {loading && <div style={{ fontSize: 11, color: 'var(--muted)' }}>Thinking…</div>}
+        {loading && <div style={{ fontSize: 11, color: 'var(--muted)' }}>{statusNote || 'Thinking…'}</div>}
       </div>
 
       <div style={{ display: 'flex', gap: 8 }}>
         <input
           value={question}
           onChange={e => setQuestion(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !loading) send('chat'); }}
+          onKeyDown={e => { if (e.key === 'Enter' && !loading) sendChat(); }}
           placeholder="Ask about these findings…"
           disabled={loading}
           style={{
@@ -81,7 +124,7 @@ export default function AssistantPanel({ auditId }: { auditId: string }) {
           }}
         />
         <button
-          onClick={() => send('chat')}
+          onClick={sendChat}
           disabled={loading || !question.trim()}
           style={{
             fontSize: 11, fontWeight: 600, padding: '5px 12px', borderRadius: 6,

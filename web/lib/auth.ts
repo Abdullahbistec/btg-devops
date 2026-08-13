@@ -34,3 +34,19 @@ export function getRequestRole(req: NextRequest): 'admin' | 'viewer' {
 export function isAdminRequest(req: NextRequest): boolean {
   return getRequestRole(req) === 'admin';
 }
+
+/**
+ * Guards the internal /api/internal/* routes the MCP server (cmd/mcp.go
+ * --http) calls on this dashboard's behalf. This is a separate secret from
+ * user sessions (cookie/JWT) — it authenticates a service (the MCP server),
+ * not a person, and is reachable from wherever that server runs rather than
+ * only from a logged-in browser.
+ */
+export function isInternalServiceRequest(req: NextRequest): boolean {
+  const expected = process.env.MCP_INTERNAL_TOKEN ?? '';
+  if (!expected) return false; // unset = feature disabled, never authorize
+  const header = req.headers.get('authorization') ?? '';
+  const presented = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (presented.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(presented), Buffer.from(expected));
+}
