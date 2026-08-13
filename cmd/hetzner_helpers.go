@@ -149,3 +149,23 @@ func hetznerRuleSensitivePort(portSpec string) (string, bool) {
 	}
 	return "", false
 }
+
+// hetznerPortDescriptor renders a rule's protocol/port for a finding's
+// description. Protocols like icmp have no port at all (Port == ""), so
+// "protocol/port" would otherwise render as a bare trailing slash
+// ("icmp/") — this reports just the protocol name in that case.
+func hetznerPortDescriptor(protocol, port string) string {
+	if port == "" {
+		return protocol
+	}
+	return protocol + "/" + port
+}
+
+// hetznerPortTarget renders what a recommendation should say to restrict —
+// "port 80" for a normal rule, "the icmp protocol" when there's no port.
+func hetznerPortTarget(protocol, port string) string {
+	if port == "" {
+		return fmt.Sprintf("the %s protocol", protocol)
+	}
+	return "port " + port
+}

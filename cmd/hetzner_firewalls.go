@@ -153,8 +153,8 @@ func hetznerFirewallFindings(firewalls []hetznerFirewall, summary *HetznerFirewa
 					Severity:       Warning,
 					Category:       "Port Open to Internet",
 					FirewallName:   fw.Name,
-					Description:    fmt.Sprintf("'%s' allows %s/%s from 0.0.0.0/0", fw.Name, rule.Protocol, rule.Port),
-					Recommendation: fmt.Sprintf("Restrict the source IP range for port %s if it does not need to be public.", rule.Port),
+					Description:    fmt.Sprintf("'%s' allows %s from 0.0.0.0/0", fw.Name, hetznerPortDescriptor(rule.Protocol, rule.Port)),
+					Recommendation: fmt.Sprintf("Restrict the source IP range for %s if it does not need to be public.", hetznerPortTarget(rule.Protocol, rule.Port)),
 				})
 			}
 		}

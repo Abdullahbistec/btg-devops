@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -187,6 +188,29 @@ func TestHetznerFirewallFindings_OtherPortOpenToInternet_Warning(t *testing.T) {
 	}
 	if len(findings) != 1 || findings[0].Severity != Warning {
 		t.Errorf("got %+v, want one Warning finding", findings)
+	}
+}
+
+// ICMP rules have no port at all (Port == "") — found via a live scan to
+// render as a bare trailing slash ("icmp/") and an empty "port " target in
+// the recommendation before this was fixed.
+func TestHetznerFirewallFindings_ICMPOpenToInternet_NoTrailingSlash(t *testing.T) {
+	firewalls := []hetznerFirewall{
+		{
+			Name:      "fw-icmp",
+			Rules:     []hetznerFirewallRule{{Direction: "in", Protocol: "icmp", Port: "", SourceIPs: []string{"0.0.0.0/0"}}},
+			AppliedTo: []hetznerFirewallTarget{{Type: "server"}},
+		},
+	}
+	findings := hetznerFirewallFindings(firewalls, &HetznerFirewallSummary{})
+	if len(findings) != 1 {
+		t.Fatalf("got %+v, want one finding", findings)
+	}
+	if strings.Contains(findings[0].Description, "icmp/") {
+		t.Errorf("Description = %q, should not contain a trailing-slash bare protocol", findings[0].Description)
+	}
+	if strings.Contains(findings[0].Recommendation, "port  ") || strings.Contains(findings[0].Recommendation, "port if") {
+		t.Errorf("Recommendation = %q, should not reference an empty port", findings[0].Recommendation)
 	}
 }
 
