@@ -1,7 +1,15 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const PUBLIC_PREFIXES = ['/login', '/register', '/verify-otp', '/api/auth', '/_next', '/favicon'];
+// /api/internal is deliberately public here — it's not unauthenticated,
+// it has its own bearer-token check (isInternalServiceRequest, a different
+// secret than a user session) for its one real caller: the MCP server
+// (cmd/mcp.go --http) proxying calls from a scheduled Claude Code routine,
+// which has no user session cookie to present. Without this exemption,
+// every /api/internal/* call gets redirected to /login before the route
+// handler's own auth check ever runs — silently breaking the async
+// AI-analysis and cost-refresh features end to end, not just rejecting them.
+const PUBLIC_PREFIXES = ['/login', '/register', '/verify-otp', '/api/auth', '/api/internal', '/_next', '/favicon'];
 
 async function hmac(secret: string, data: string): Promise<string> {
   const key = await crypto.subtle.importKey(

@@ -42,11 +42,18 @@ interface SpendData {
   byService: { name: string; cost: number }[];
   byResourceGroup: { name: string; cost: number }[];
   fetchedAt: string;
+  noData?: boolean;
+  message?: string;
 }
+
+const REFRESH_POLL_MS = 4000;
+const REFRESH_TIMEOUT_MS = 10 * 60 * 1000; // the routine polls every few minutes — give it real headroom
 
 function SpendView() {
   const [data, setData] = useState<SpendData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [statusNote, setStatusNote] = useState('');
   const [error, setError] = useState('');
 
   function load() {
@@ -64,17 +71,58 @@ function SpendView() {
 
   useEffect(() => { load(); }, []);
 
+  /** This never calls Azure directly — it queues a request that a scheduled
+   * Claude Code routine picks up via the MCP server (cmd/mcp.go --http),
+   * same mechanism as the AI Assistant's Summarize button. See
+   * docs/ai-analysis-routine-setup.md. */
+  async function requestRefresh() {
+    setRefreshing(true);
+    setError('');
+    setStatusNote('Queued — waiting for the refresh routine to pick this up…');
+    try {
+      const createRes = await fetch('/api/cost-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscriptionId: data?.subscription.id }),
+      });
+      const created = await createRes.json();
+      if (!createRes.ok) throw new Error(created.error || 'Could not queue a cost refresh');
+
+      const deadline = Date.now() + REFRESH_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, REFRESH_POLL_MS));
+        const pollRes = await fetch(`/api/cost-requests/${created.id}`);
+        const polled = await pollRes.json();
+        if (!pollRes.ok) throw new Error(polled.error || 'Could not check refresh status');
+
+        if (polled.status === 'done') {
+          load();
+          return;
+        }
+        if (polled.status === 'failed') {
+          throw new Error(polled.error_message || 'Refresh failed');
+        }
+      }
+      throw new Error('Refresh is taking longer than expected — the routine may not be running.');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setStatusNote('');
+      setRefreshing(false);
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-          {data ? `Last refreshed: ${new Date(data.fetchedAt).toLocaleTimeString()} · Month-to-date` : ''}
+          {refreshing ? statusNote : data && !data.noData ? `Last refreshed: ${new Date(data.fetchedAt).toLocaleTimeString()} · Month-to-date` : ''}
         </div>
-        <button onClick={load} disabled={loading} style={{
+        <button onClick={requestRefresh} disabled={loading || refreshing} style={{
           marginLeft: 'auto', padding: '5px 12px', fontSize: 11, fontWeight: 700,
           background: 'transparent', border: `1px solid ${ACCENT}`, borderRadius: 3, color: ACCENT, cursor: 'pointer',
         }}>
-          {loading ? '⟳ Refreshing…' : '↻ Refresh'}
+          {refreshing ? '⟳ Refreshing…' : '↻ Refresh'}
         </button>
       </div>
 
@@ -84,7 +132,14 @@ function SpendView() {
         </div>
       )}
 
-      {!error && data && (
+      {!error && data?.noData && (
+        <div className="glass" style={{ borderRadius: 8, padding: '24px 20px', textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
+          {data.message || 'No cost data fetched yet for this subscription.'}<br />
+          Click Refresh above to request one.
+        </div>
+      )}
+
+      {!error && data && !data.noData && (
         <>
           <div className="glass" style={{ borderRadius: 8, padding: '18px 20px' }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>

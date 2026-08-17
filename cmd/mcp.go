@@ -125,14 +125,21 @@ func runMCP(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--http requires a bearer token: set --bearer-token or MCP_BEARER_TOKEN env var")
 	}
 
-	// The three tools below back the dashboard's async AI-analysis feature —
-	// only meaningful in --http mode, since only a remote (not local-stdio)
-	// caller like a scheduled Claude Code routine needs them.
+	// The tools below back async, remote-only features — only meaningful in
+	// --http mode, since only a remote caller like a scheduled Claude Code
+	// routine needs them (a local stdio client already has the CLI itself).
 	s.AddTool(buildListPendingRequestsTool(), listPendingRequestsHandler)
 	s.AddTool(buildGetAuditDataTool(), getAuditDataHandler)
 	s.AddTool(buildSaveAnalysisTool(), saveAnalysisHandler)
+	s.AddTool(buildListPendingCostRequestsTool(), listPendingCostRequestsHandler)
+	s.AddTool(buildFetchCostDataTool(), fetchCostDataHandler)
 
-	httpServer := server.NewStreamableHTTPServer(s)
+	// mcp-go's Host-header check (DNS-rebinding protection) rejects any
+	// request whose Host isn't localhost — the right default for a local
+	// dev tool with no other auth, but this server is deliberately reached
+	// through a tunnel/real domain and already requires a bearer token
+	// (requireBearerToken below), which is the real security boundary here.
+	httpServer := server.NewStreamableHTTPServer(s, server.WithDisableLocalhostProtection(true))
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", requireBearerToken(httpServer, getMCPBearerToken()))
 
@@ -229,6 +236,55 @@ func saveAnalysisHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp
 	body, err := callDashboardInternalAPI(ctx, http.MethodPost, "/api/internal/analysis-requests/"+requestID+"/complete", payload)
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("save_analysis failed", err), nil
+	}
+	return mcp.NewToolResultText(string(body)), nil
+}
+
+// ---------- async Cost Management refresh tools (--http mode only) ----------
+//
+// Unlike get_audit_data/save_analysis, fetch_cost_data does the entire job
+// in one call — there's no reasoning step for Claude to meaningfully insert
+// between "fetch" and "save" for a raw data refresh, and Azure credentials
+// must never leave the dashboard's own server. The internal route this
+// calls resolves credentials, fetches from Azure, and writes the result
+// itself; this tool (and the routine calling it) only ever sees the
+// pass/fail outcome. See docs/ai-analysis-routine-setup.md.
+
+func buildListPendingCostRequestsTool() mcp.Tool {
+	return mcp.NewTool("list_pending_cost_requests",
+		mcp.WithDescription("List pending Cost Management refresh requests. Call this on each polling pass alongside list_pending_requests."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+	)
+}
+
+func buildFetchCostDataTool() mcp.Tool {
+	return mcp.NewTool("fetch_cost_data",
+		mcp.WithDescription("Fetch and save fresh Cost Management data for one pending request. Does the entire refresh in one call — nothing else to do afterward for this request."),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("request_id",
+			mcp.Description("The id of a pending cost request, from list_pending_cost_requests"),
+			mcp.Required(),
+		),
+	)
+}
+
+func listPendingCostRequestsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	body, err := callDashboardInternalAPI(ctx, http.MethodGet, "/api/internal/cost-requests/pending", nil)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("list_pending_cost_requests failed", err), nil
+	}
+	return mcp.NewToolResultText(string(body)), nil
+}
+
+func fetchCostDataHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	requestID, err := request.RequireString("request_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	body, err := callDashboardInternalAPI(ctx, http.MethodPost, "/api/internal/cost-requests/"+requestID+"/fetch", nil)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("fetch_cost_data failed", err), nil
 	}
 	return mcp.NewToolResultText(string(body)), nil
 }

@@ -106,6 +106,34 @@ function initSchema(db: DatabaseSync) {
       FOREIGN KEY (audit_id) REFERENCES audits(id)
     );
     CREATE INDEX IF NOT EXISTS idx_analysis_requests_status ON analysis_requests(status);
+
+    -- Last-known-good Cost Management data per subscription. The dashboard's
+    -- /api/cost/spend reads ONLY this table — it never calls Azure live from
+    -- a page load. A row here is only ever written by the same MCP +
+    -- Claude-routine mechanism as analysis_requests, via cost_fetch_requests
+    -- below, since Cost Management's rate limit is tight enough that
+    -- calling it from the request path caused recurring user-visible 429s.
+    CREATE TABLE IF NOT EXISTS cost_snapshots (
+      subscription_id   TEXT PRIMARY KEY,
+      total_cost        REAL DEFAULT 0,
+      currency          TEXT DEFAULT 'USD',
+      by_service        TEXT DEFAULT '[]',
+      by_resource_group TEXT DEFAULT '[]',
+      fetched_at        TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Queue of "please refresh cost_snapshots for this subscription"
+    -- requests, picked up by the same scheduled Claude Code routine that
+    -- services analysis_requests. See docs/ai-analysis-routine-setup.md.
+    CREATE TABLE IF NOT EXISTS cost_fetch_requests (
+      id             TEXT PRIMARY KEY,
+      subscription_id TEXT NOT NULL,
+      status         TEXT DEFAULT 'pending',
+      error_message  TEXT DEFAULT '',
+      requested_at   TEXT DEFAULT (datetime('now')),
+      completed_at   TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_cost_fetch_requests_status ON cost_fetch_requests(status);
   `);
 
   // Migrations
@@ -370,6 +398,74 @@ export function failAnalysisRequest(id: string, message: string): void {
   getDB().prepare(`
     UPDATE analysis_requests SET status = 'failed', error_message = ?, completed_at = datetime('now') WHERE id = ?
   `).run(message, id);
+}
+
+// ── Cost Management snapshots + fetch requests (async, via MCP + routine) ──────
+
+export interface CostSnapshot {
+  subscription_id: string;
+  total_cost: number;
+  currency: string;
+  by_service: string;        // JSON-encoded { name, cost }[]
+  by_resource_group: string; // JSON-encoded { name, cost }[]
+  fetched_at: string;
+}
+
+export function getCostSnapshot(subscriptionId: string): CostSnapshot | null {
+  return (getDB().prepare('SELECT * FROM cost_snapshots WHERE subscription_id = ?').get(subscriptionId) ?? null) as unknown as CostSnapshot | null;
+}
+
+export function saveCostSnapshot(subscriptionId: string, data: { totalCost: number; currency: string; byService: unknown; byResourceGroup: unknown }): void {
+  getDB().prepare(`
+    INSERT INTO cost_snapshots (subscription_id, total_cost, currency, by_service, by_resource_group, fetched_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(subscription_id) DO UPDATE SET
+      total_cost = excluded.total_cost,
+      currency = excluded.currency,
+      by_service = excluded.by_service,
+      by_resource_group = excluded.by_resource_group,
+      fetched_at = excluded.fetched_at
+  `).run(subscriptionId, data.totalCost, data.currency, JSON.stringify(data.byService), JSON.stringify(data.byResourceGroup));
+}
+
+export interface CostFetchRequest {
+  id: string;
+  subscription_id: string;
+  status: 'pending' | 'done' | 'failed';
+  error_message: string;
+  requested_at: string;
+  completed_at: string | null;
+}
+
+export function createCostFetchRequest(subscriptionId: string): CostFetchRequest {
+  const id = uuidv4();
+  getDB().prepare(`INSERT INTO cost_fetch_requests (id, subscription_id) VALUES (?, ?)`).run(id, subscriptionId);
+  return getCostFetchRequest(id)!;
+}
+
+export function getCostFetchRequest(id: string): CostFetchRequest | null {
+  return (getDB().prepare('SELECT * FROM cost_fetch_requests WHERE id = ?').get(id) ?? null) as unknown as CostFetchRequest | null;
+}
+
+/** The most recent request for a subscription that's still pending, if any —
+ * used so the "Refresh" button doesn't queue a duplicate request while one
+ * is already in flight for the same subscription. */
+export function getPendingCostFetchRequestFor(subscriptionId: string): CostFetchRequest | null {
+  return (getDB().prepare(
+    `SELECT * FROM cost_fetch_requests WHERE subscription_id = ? AND status = 'pending' ORDER BY requested_at DESC LIMIT 1`
+  ).get(subscriptionId) ?? null) as unknown as CostFetchRequest | null;
+}
+
+export function listPendingCostFetchRequests(): CostFetchRequest[] {
+  return getDB().prepare(`SELECT * FROM cost_fetch_requests WHERE status = 'pending' ORDER BY requested_at`).all() as unknown as CostFetchRequest[];
+}
+
+export function completeCostFetchRequest(id: string): void {
+  getDB().prepare(`UPDATE cost_fetch_requests SET status = 'done', completed_at = datetime('now') WHERE id = ?`).run(id);
+}
+
+export function failCostFetchRequest(id: string, message: string): void {
+  getDB().prepare(`UPDATE cost_fetch_requests SET status = 'failed', error_message = ?, completed_at = datetime('now') WHERE id = ?`).run(message, id);
 }
 
 // ── Dashboard aggregates ───────────────────────────────────────────────────────
