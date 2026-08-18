@@ -12,20 +12,21 @@ type SubscriptionCredentials struct {
 	ClientID         string
 	ClientSecretEnc  string
 	SubscriptionName string
+	Type             string // "azure" | "power_platform"
 }
 
 // FindSubscriptionCredentials looks up a subscription by its Azure subscription ID
 // and returns the encrypted credentials. Returns nil if not found or inactive.
 func FindSubscriptionCredentials(ctx context.Context, pool *pgxpool.Pool, subscriptionID string) (*SubscriptionCredentials, error) {
 	row := pool.QueryRow(ctx,
-		`SELECT subscription_id, tenant_id, client_id, client_secret_enc, name
+		`SELECT COALESCE(subscription_id, ''), tenant_id, client_id, client_secret_enc, name, type
 		 FROM subscriptions
 		 WHERE subscription_id = $1 AND is_active = TRUE`,
 		subscriptionID,
 	)
 
 	var creds SubscriptionCredentials
-	err := row.Scan(&creds.SubscriptionID, &creds.TenantID, &creds.ClientID, &creds.ClientSecretEnc, &creds.SubscriptionName)
+	err := row.Scan(&creds.SubscriptionID, &creds.TenantID, &creds.ClientID, &creds.ClientSecretEnc, &creds.SubscriptionName, &creds.Type)
 	if err != nil {
 		return nil, nil // not found — caller falls back to env vars
 	}
@@ -35,7 +36,7 @@ func FindSubscriptionCredentials(ctx context.Context, pool *pgxpool.Pool, subscr
 // FindAllActiveSubscriptions returns all active subscriptions from the DB.
 func FindAllActiveSubscriptions(ctx context.Context, pool *pgxpool.Pool) ([]SubscriptionCredentials, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT subscription_id, tenant_id, client_id, client_secret_enc, name
+		`SELECT COALESCE(subscription_id, ''), tenant_id, client_id, client_secret_enc, name, type
 		 FROM subscriptions WHERE is_active = TRUE ORDER BY created_at ASC`,
 	)
 	if err != nil {
@@ -46,7 +47,7 @@ func FindAllActiveSubscriptions(ctx context.Context, pool *pgxpool.Pool) ([]Subs
 	var subs []SubscriptionCredentials
 	for rows.Next() {
 		var s SubscriptionCredentials
-		if err := rows.Scan(&s.SubscriptionID, &s.TenantID, &s.ClientID, &s.ClientSecretEnc, &s.SubscriptionName); err != nil {
+		if err := rows.Scan(&s.SubscriptionID, &s.TenantID, &s.ClientID, &s.ClientSecretEnc, &s.SubscriptionName, &s.Type); err != nil {
 			return nil, err
 		}
 		subs = append(subs, s)

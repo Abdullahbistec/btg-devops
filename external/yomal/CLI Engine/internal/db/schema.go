@@ -295,6 +295,14 @@ CREATE TABLE IF NOT EXISTS data_gap_marks (
   PRIMARY KEY (subscription_id, scope)
 );
 
+-- Power Platform support: a subscriptions row can now represent either an
+-- Azure subscription (type='azure', has subscription_id) or a Power
+-- Platform tenant service principal (type='power_platform', subscription_id
+-- NULL — Power Platform has no subscription concept, only a tenant-wide SP).
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'azure'
+  CHECK (type IN ('azure', 'power_platform'));
+ALTER TABLE subscriptions ALTER COLUMN subscription_id DROP NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_findings_audit_id            ON findings(audit_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_requests_status     ON analysis_requests(status);
 CREATE INDEX IF NOT EXISTS idx_analysis_requests_audit_id   ON analysis_requests(audit_id);
