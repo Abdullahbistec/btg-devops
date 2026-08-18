@@ -74,15 +74,15 @@ func fetchPPFlows(ctx context.Context, token, envName string) ([]ppFlow, error) 
 	return all, nil
 }
 
-func fetchAndBuildFlows(ctx context.Context, token string) (*PPFlowsData, error) {
-	envs, err := fetchPPEnvironments(ctx, token)
+func fetchAndBuildFlows(ctx context.Context, envToken, flowToken string) (*PPFlowsData, error) {
+	envs, err := fetchPPEnvironments(ctx, envToken)
 	if err != nil {
 		return nil, fmt.Errorf("listing environments: %w", err)
 	}
 
 	var all []ppFlowWithEnv
 	for _, env := range envs {
-		flows, err := fetchPPFlows(ctx, token, env.Name)
+		flows, err := fetchPPFlows(ctx, flowToken, env.Name)
 		if err != nil {
 			continue
 		}
@@ -94,10 +94,19 @@ func fetchAndBuildFlows(ctx context.Context, token string) (*PPFlowsData, error)
 }
 
 // ExtractPPFlows fetches every Power Automate flow across every environment in the tenant.
+//
+// This needs two token audiences: the environments lookup hits the BAP admin
+// API (ppAppsScope), while the flows-per-environment calls hit the Power
+// Automate API (ppFlowScope). Unlike apps.go, these two APIs do NOT share a
+// resource audience, so a single token cannot be reused across both calls.
 func ExtractPPFlows(ctx context.Context, tenantID string, cred azcore.TokenCredential) (*PPFlowsData, error) {
-	token, err := ppToken(ctx, cred, ppFlowScope)
+	envToken, err := ppToken(ctx, cred, ppAppsScope)
 	if err != nil {
-		return nil, fmt.Errorf("acquiring power platform token: %w", err)
+		return nil, fmt.Errorf("acquiring power platform token for environments lookup: %w", err)
 	}
-	return fetchAndBuildFlows(ctx, token)
+	flowToken, err := ppToken(ctx, cred, ppFlowScope)
+	if err != nil {
+		return nil, fmt.Errorf("acquiring power automate token: %w", err)
+	}
+	return fetchAndBuildFlows(ctx, envToken, flowToken)
 }

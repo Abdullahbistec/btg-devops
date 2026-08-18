@@ -45,7 +45,7 @@ func TestFetchAndBuildFlows_AggregatesAcrossEnvironments(t *testing.T) {
 	ppBAPBase, ppFlowBase = srv.URL, srv.URL
 	defer func() { ppBAPBase, ppFlowBase = origBAP, origFlow }()
 
-	data, err := fetchAndBuildFlows(context.Background(), "test-token")
+	data, err := fetchAndBuildFlows(context.Background(), "test-token", "test-token")
 	require.NoError(t, err)
 	assert.Equal(t, 1, data.TotalFlows)
 	require.Len(t, data.Flows, 1)
