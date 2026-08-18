@@ -15,6 +15,7 @@ import (
 	"github.com/chanbistec/btg-devops/internal/crypto"
 	"github.com/chanbistec/btg-devops/internal/db"
 	"github.com/chanbistec/btg-devops/internal/extractors"
+	"github.com/chanbistec/btg-devops/internal/extractors/powerplatform"
 	"github.com/chanbistec/btg-devops/internal/mailer"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
@@ -174,8 +175,25 @@ func failAndAlert(ctx context.Context, pool *pgxpool.Pool, auditID string, sub d
 	)
 }
 
+// extractorKeysForType returns which extractor keys collectForSubscription
+// runs for a given subscription type — split out from collectForSubscription
+// so the branching logic is unit-testable without a database or network.
+func extractorKeysForType(sub db.SubscriptionCredentials) []string {
+	if sub.Type == "power_platform" {
+		return []string{"pp-environments", "pp-apps", "pp-flows", "pp-powerbi"}
+	}
+	return []string{
+		"storage", "iam", "nsg", "acr", "cosmosdb", "keyvault", "functions",
+		"appservice", "appserviceplan", "publicip", "cognitiveservices",
+		"resourcegroup", "cdn", "vm", "inventory",
+	}
+}
+
 func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.SubscriptionCredentials, trigger string) error {
 	subID := sub.SubscriptionID
+	if sub.Type == "power_platform" {
+		subID = sub.TenantID // Power Platform has no subscription ID — the tenant ID is the natural per-audit identifier
+	}
 
 	// --- Create audit row ---
 	auditID, err := db.CreateAudit(ctx, pool, db.CreateAuditParams{
@@ -200,7 +218,9 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 			failAndAlert(ctx, pool, auditID, sub, fmt.Sprintf("azure auth failed: %v", err))
 			return fmt.Errorf("azure auth failed: %w", err)
 		}
-		_ = db.TouchLastAudit(ctx, pool, subID)
+		if sub.Type != "power_platform" {
+			_ = db.TouchLastAudit(ctx, pool, subID) // TouchLastAudit looks up by subscription_id, which is empty for PP rows
+		}
 		fmt.Fprintf(os.Stderr, "Using credentials from database for: %s\n", sub.SubscriptionName)
 	} else {
 		cred, err = azidentity.NewDefaultAzureCredential(nil)
@@ -211,30 +231,40 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		fmt.Fprintf(os.Stderr, "Using credentials from environment variables\n")
 	}
 
-	// --- Run all 12 extractors ---
+	// --- Run extractors for this subscription's type ---
 	type extractor struct {
 		key string
 		run func() (any, error)
 	}
 
-	allExtractors := []extractor{
-		{"storage", func() (any, error) { return extractors.ExtractStorage(ctx, subID, cred) }},
-		{"iam", func() (any, error) { return extractors.ExtractIAM(ctx, subID, cred) }},
-		{"nsg", func() (any, error) { return extractors.ExtractNSG(ctx, subID, cred) }},
-		{"acr", func() (any, error) { return extractors.ExtractACR(ctx, subID, cred) }},
-		{"cosmosdb", func() (any, error) { return extractors.ExtractCosmosDB(ctx, subID, cred) }},
-		{"keyvault", func() (any, error) { return extractors.ExtractKeyVault(ctx, subID, cred) }},
-		{"functions", func() (any, error) { return extractors.ExtractFunctions(ctx, subID, cred) }},
-		{"appservice", func() (any, error) { return extractors.ExtractAppService(ctx, subID, cred) }},
-		{"appserviceplan", func() (any, error) { return extractors.ExtractAppServicePlan(ctx, subID, cred) }},
-		{"publicip", func() (any, error) { return extractors.ExtractPublicIP(ctx, subID, cred) }},
-		{"cognitiveservices", func() (any, error) { return extractors.ExtractCognitiveServices(ctx, subID, cred) }},
-		{"resourcegroup", func() (any, error) { return extractors.ExtractResourceGroup(ctx, subID, cred) }},
-		{"cdn", func() (any, error) { return extractors.ExtractCDN(ctx, subID, cred) }},
-		{"vm", func() (any, error) { return extractors.ExtractVM(ctx, subID, cred) }},
-		// Envelope-only listing of EVERY resource type — covers the ones
-		// without a dedicated extractor (spec 11 §6).
-		{"inventory", func() (any, error) { return extractors.ExtractInventory(ctx, subID, cred) }},
+	var allExtractors []extractor
+	if sub.Type == "power_platform" {
+		allExtractors = []extractor{
+			{"pp-environments", func() (any, error) { return powerplatform.ExtractPPEnvironments(ctx, sub.TenantID, cred) }},
+			{"pp-apps", func() (any, error) { return powerplatform.ExtractPPApps(ctx, sub.TenantID, cred) }},
+			{"pp-flows", func() (any, error) { return powerplatform.ExtractPPFlows(ctx, sub.TenantID, cred) }},
+			{"pp-powerbi", func() (any, error) { return powerplatform.ExtractPPPowerBI(ctx, sub.TenantID, cred) }},
+		}
+	} else {
+		allExtractors = []extractor{
+			{"storage", func() (any, error) { return extractors.ExtractStorage(ctx, subID, cred) }},
+			{"iam", func() (any, error) { return extractors.ExtractIAM(ctx, subID, cred) }},
+			{"nsg", func() (any, error) { return extractors.ExtractNSG(ctx, subID, cred) }},
+			{"acr", func() (any, error) { return extractors.ExtractACR(ctx, subID, cred) }},
+			{"cosmosdb", func() (any, error) { return extractors.ExtractCosmosDB(ctx, subID, cred) }},
+			{"keyvault", func() (any, error) { return extractors.ExtractKeyVault(ctx, subID, cred) }},
+			{"functions", func() (any, error) { return extractors.ExtractFunctions(ctx, subID, cred) }},
+			{"appservice", func() (any, error) { return extractors.ExtractAppService(ctx, subID, cred) }},
+			{"appserviceplan", func() (any, error) { return extractors.ExtractAppServicePlan(ctx, subID, cred) }},
+			{"publicip", func() (any, error) { return extractors.ExtractPublicIP(ctx, subID, cred) }},
+			{"cognitiveservices", func() (any, error) { return extractors.ExtractCognitiveServices(ctx, subID, cred) }},
+			{"resourcegroup", func() (any, error) { return extractors.ExtractResourceGroup(ctx, subID, cred) }},
+			{"cdn", func() (any, error) { return extractors.ExtractCDN(ctx, subID, cred) }},
+			{"vm", func() (any, error) { return extractors.ExtractVM(ctx, subID, cred) }},
+			// Envelope-only listing of EVERY resource type — covers the ones
+			// without a dedicated extractor (spec 11 §6).
+			{"inventory", func() (any, error) { return extractors.ExtractInventory(ctx, subID, cred) }},
+		}
 	}
 
 	rawData := map[string]any{
@@ -284,23 +314,27 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 	// total+2) rather than restarting at 1/2 — the dashboard's step list
 	// (STEP_ORDER in app/audits/page.tsx) expects one continuous sequence of
 	// 14 steps, not 12 followed by a separate 1-of-2.
-	fmt.Fprintf(os.Stderr, "[1/2] Extracting cost...\n")
-	if err := db.UpdateAuditStep(ctx, pool, auditID, fmt.Sprintf("extracting cost (%d/%d)", total+1, total+2)); err != nil {
-		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
-	}
-	costData, err := extractors.ExtractCost(ctx, subID, cred)
-	if err != nil {
-		extractErrors = append(extractErrors, fmt.Sprintf("cost: %v", err))
-		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
-	}
-	fmt.Fprintf(os.Stderr, "[2/2] Extracting usage...\n")
-	if err := db.UpdateAuditStep(ctx, pool, auditID, fmt.Sprintf("extracting usage (%d/%d)", total+2, total+2)); err != nil {
-		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
-	}
-	usageData, err := extractors.ExtractUsage(ctx, subID, cred)
-	if err != nil {
-		extractErrors = append(extractErrors, fmt.Sprintf("usage: %v", err))
-		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+	var costData *extractors.CostData
+	var usageData *extractors.UsageData
+	if sub.Type != "power_platform" {
+		fmt.Fprintf(os.Stderr, "[1/2] Extracting cost...\n")
+		if err := db.UpdateAuditStep(ctx, pool, auditID, fmt.Sprintf("extracting cost (%d/%d)", total+1, total+2)); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+		}
+		costData, err = extractors.ExtractCost(ctx, subID, cred)
+		if err != nil {
+			extractErrors = append(extractErrors, fmt.Sprintf("cost: %v", err))
+			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+		}
+		fmt.Fprintf(os.Stderr, "[2/2] Extracting usage...\n")
+		if err := db.UpdateAuditStep(ctx, pool, auditID, fmt.Sprintf("extracting usage (%d/%d)", total+2, total+2)); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+		}
+		usageData, err = extractors.ExtractUsage(ctx, subID, cred)
+		if err != nil {
+			extractErrors = append(extractErrors, fmt.Sprintf("usage: %v", err))
+			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+		}
 	}
 
 	// If every single extractor and the cost call failed, the audit
