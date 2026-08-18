@@ -393,13 +393,13 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 		}
 		cacheHit := false
 		if hash, ok := scopeHashes[e.key]; ok {
-			if prevHash, found, err := db.PreviousAnalyzedScopeHash(ctx, pool, sub.SubscriptionID, auditID, e.key); err != nil {
+			if prevHash, found, err := db.PreviousAnalyzedScopeHash(ctx, pool, subID, auditID, e.key); err != nil {
 				fmt.Fprintf(os.Stderr, "  warning: cache check for %s: %v\n", e.key, err)
 			} else if found && prevHash == hash {
 				// Staleness ceiling (spec 14 A5): a scope that already
 				// cache-hit db.CacheStalenessCeiling times in a row forces a
 				// real re-analysis now instead of caching indefinitely.
-				if streak, err := db.TrailingCacheHitStreak(ctx, pool, sub.SubscriptionID, auditID, e.key); err != nil {
+				if streak, err := db.TrailingCacheHitStreak(ctx, pool, subID, auditID, e.key); err != nil {
 					fmt.Fprintf(os.Stderr, "  warning: cache streak check for %s: %v\n", e.key, err)
 				} else if streak < db.CacheStalenessCeiling {
 					cacheHit = true
