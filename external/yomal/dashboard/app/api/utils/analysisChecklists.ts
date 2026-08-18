@@ -148,6 +148,39 @@ export const CHECKLISTS: Record<string, string[]> = {
     'Is boot diagnostics disabled, removing a basic troubleshooting/audit signal?',
     'Is the VM missing from any patch-management/update configuration signal present in the data?',
   ],
+  'pp-environments': [
+    'Using each environment\'s own "properties.isDisabled": is a disabled environment still present and consuming a capacity allocation?',
+    'Using each environment\'s own "properties.governanceConfiguration.protectionLevel": is a production-looking environment (by name/sku) missing the Managed Environment governance layer ("Standard" protection level)?',
+    'Using "dlp_policies" and each policy\'s "properties.environments"/"filterType": is any environment NOT covered by any tenant DLP policy, leaving connector usage completely ungoverned there?',
+    'Using each policy\'s "properties.connectorGroups": is the HTTP connector (shared_http, shared_httpwithazuread) absent from every policy\'s "Blocked" group tenant-wide?',
+    'Using each environment\'s own "properties.linkedEnvironmentMetadata.isDormant": is a Dataverse-linked environment dormant while still incurring capacity cost?',
+    'Using each environment\'s own "properties.expirationTime": is a trial/sandbox environment approaching or past its expiration with real content still in it?',
+    'Is more than one environment marked "properties.isDefault" — the tenant should have exactly one Default environment?',
+  ],
+  'pp-apps': [
+    'Using each app\'s own "app.properties.owner"/"app.properties.createdBy": is the owner a departed/disabled user (cross-reference against known-active users if available), leaving the app effectively unowned?',
+    'Using each app\'s own "app.properties.lastModifiedTime": has a shared app (sharedGroupsCount or sharedUsersCount > 0) had no updates in a long time while still being actively shared — stale but still exposed?',
+    'Using each app\'s own "app.properties.usesPremiumApi": is a premium-connector app running in an environment/tenant where premium licensing has not been confirmed?',
+    'Using each app\'s own "app.properties.usesCustomApi": does a custom-connector app lack any visible owner/documentation context, making it hard to audit what it actually connects to?',
+    'Using each app\'s own "app.properties.sharedUsersCount"/"sharedGroupsCount": is an app shared tenant-wide or to a very large group when its name/description suggests a narrow, personal, or test purpose?',
+    'Using each app\'s "environment" field: are there multiple near-duplicate app names in different environments, suggesting an abandoned copy that should be cleaned up?',
+  ],
+  'pp-flows': [
+    'Using each flow\'s own "flow.properties.state": is a flow "Suspended" (Microsoft auto-suspends flows with persistent failures) and still present, indicating an unresolved broken automation?',
+    'Using each flow\'s own "flow.properties.definitionSummary.actions[].api.name"/"triggers[].api.name": does the flow use a high-risk connector (shared_http, shared_httpwithazuread, shared_ftp, shared_sftp, shared_smtp) that can move data to/from arbitrary external endpoints?',
+    'Using the same "definitionSummary" fields: does the flow use a broad-data-access connector (shared_sql, shared_sharepointonline, shared_commondataservice(forapps), shared_azureblob, shared_onedriveforbusiness, shared_office365) worth confirming is actually authorized?',
+    'Using each flow\'s own "flow.properties.creator": is the creator a departed/disabled user, leaving a still-running automation effectively unowned?',
+    'Using each flow\'s own "flow.properties.lastModifiedTime" combined with "state": is a "Started" (active) flow untouched for a very long time — worth confirming it is still actually needed?',
+    'Using each flow\'s own "environment" field: is a flow running in a non-production-looking environment (dev/test/sandbox by name) but touching production-grade connectors (SQL, SharePoint, Dataverse)?',
+  ],
+  'pp-powerbi': [
+    'Using each workspace\'s own "state": is the workspace "Deleted" but still showing up in the admin listing — should be permanently removed?',
+    'Using each workspace\'s own "users[].groupUserAccessRight": does a non-personal workspace ("type" != "PersonalGroup") have no user with "Admin" access — an orphaned workspace no one manages?',
+    'Using each workspace\'s own "reports"/"datasets" arrays: is a non-personal workspace completely empty (zero reports and zero datasets) — safe to delete?',
+    'Using each workspace\'s own "type" and "reports"/"datasets" counts: does a "PersonalGroup" (My Workspace) hold a significant number of reports/datasets — real business content siloed in a personal workspace instead of a shared one?',
+    'Using each workspace\'s own "isOnDedicatedCapacity" alongside "reports"/"datasets" counts: is a large workspace (many reports/datasets) still on shared capacity, risking inconsistent performance?',
+    'Using each dataset\'s own "isRefreshable" field: are there datasets with refresh disabled in a non-personal workspace, meaning reports built on them may show stale data?',
+  ],
 }
 
 /** Returns the checklist text to append to a single resource-type scope's

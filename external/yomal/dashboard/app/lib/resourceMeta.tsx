@@ -1,6 +1,6 @@
 import {
   HardDrive, UserCheck, Shield, Container, Database, KeyRound,
-  Zap, Globe, Layers, Brain, FolderTree, Network, Box, LucideIcon,
+  Zap, Globe, Layers, Brain, FolderTree, Network, Box, Blocks, LucideIcon,
 } from 'lucide-react'
 
 interface ResourceMeta {
@@ -21,6 +21,10 @@ const META: Record<string, ResourceMeta> = {
   cognitiveservices: { label: 'Cognitive Services',      icon: Brain },
   resourcegroup:     { label: 'Resource Groups',         icon: FolderTree },
   publicip:          { label: 'Public IPs',              icon: Network },
+  'pp-environments': { label: 'PP Environments',         icon: Blocks },
+  'pp-apps':         { label: 'Power Apps',              icon: Zap },
+  'pp-flows':        { label: 'Power Automate Flows',    icon: Network },
+  'pp-powerbi':      { label: 'Power BI Workspaces',     icon: Database },
 }
 
 export function resourceMeta(slug: string): ResourceMeta {
