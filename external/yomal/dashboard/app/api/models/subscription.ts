@@ -3,7 +3,7 @@ import { Subscription } from '../types'
 
 export async function findAllSubscriptions(): Promise<Subscription[]> {
   const { rows } = await pool.query(
-    `SELECT id, name, subscription_id, tenant_id, client_id, is_active, created_at, last_audit_at
+    `SELECT id, name, type, subscription_id, tenant_id, client_id, is_active, created_at, last_audit_at
      FROM subscriptions ORDER BY created_at ASC`
   )
   return rows
@@ -11,7 +11,7 @@ export async function findAllSubscriptions(): Promise<Subscription[]> {
 
 export async function findSubscriptionById(id: string): Promise<Subscription | null> {
   const { rows } = await pool.query(
-    `SELECT id, name, subscription_id, tenant_id, client_id, is_active, created_at, last_audit_at
+    `SELECT id, name, type, subscription_id, tenant_id, client_id, is_active, created_at, last_audit_at
      FROM subscriptions WHERE id = $1`,
     [id]
   )
@@ -20,16 +20,17 @@ export async function findSubscriptionById(id: string): Promise<Subscription | n
 
 export async function insertSubscription(
   name: string,
-  subscriptionId: string,
+  type: 'azure' | 'power_platform',
+  subscriptionId: string | null,
   tenantId: string,
   clientId: string,
   clientSecretEnc: string,
   createdBy: string
 ): Promise<string> {
   const { rows } = await pool.query(
-    `INSERT INTO subscriptions (name, subscription_id, tenant_id, client_id, client_secret_enc, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-    [name, subscriptionId, tenantId, clientId, clientSecretEnc, createdBy]
+    `INSERT INTO subscriptions (name, type, subscription_id, tenant_id, client_id, client_secret_enc, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+    [name, type, subscriptionId, tenantId, clientId, clientSecretEnc, createdBy]
   )
   return rows[0].id
 }

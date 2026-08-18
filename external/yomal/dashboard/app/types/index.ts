@@ -248,7 +248,8 @@ export interface RegionSummary {
 export interface Subscription {
   id: string
   name: string
-  subscription_id: string
+  type: 'azure' | 'power_platform'
+  subscription_id: string | null
   tenant_id: string
   client_id: string
   is_active: boolean

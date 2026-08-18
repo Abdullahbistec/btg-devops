@@ -14,15 +14,24 @@ export async function getSubscriptionController(id: string) {
 }
 
 export async function createSubscriptionController(
-  body: { name: string; subscription_id: string; tenant_id: string; client_id: string; client_secret: string },
+  body: { name: string; type?: 'azure' | 'power_platform'; subscription_id?: string; tenant_id: string; client_id: string; client_secret: string },
   auth: JWTPayload
 ) {
-  const { name, subscription_id, tenant_id, client_id, client_secret } = body
-  if (!name || !subscription_id || !tenant_id || !client_id || !client_secret) {
-    return { error: 'name, subscription_id, tenant_id, client_id and client_secret required', status: 400 }
+  const { name, tenant_id, client_id, client_secret } = body
+  const type = body.type === 'power_platform' ? 'power_platform' : 'azure'
+
+  if (!name || !tenant_id || !client_id || !client_secret) {
+    return { error: 'name, tenant_id, client_id and client_secret required', status: 400 }
   }
+  if (type === 'azure' && !body.subscription_id) {
+    return { error: 'subscription_id is required for an Azure subscription', status: 400 }
+  }
+
   const client_secret_enc = await encryptSecret(client_secret)
-  const id = await insertSubscription(name, subscription_id, tenant_id, client_id, client_secret_enc, auth.user_id)
+  const id = await insertSubscription(
+    name, type, type === 'power_platform' ? null : body.subscription_id!,
+    tenant_id, client_id, client_secret_enc, auth.user_id
+  )
   return { data: { id }, status: 201 }
 }
 
