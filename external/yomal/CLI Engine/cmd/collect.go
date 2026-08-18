@@ -344,7 +344,10 @@ func collectForSubscription(ctx context.Context, pool *pgxpool.Pool, sub db.Subs
 	// design (a metrics glitch on one resource shouldn't fail the whole
 	// audit), so it can never appear in extractErrors and including it in
 	// the threshold would make this check unreachable.
-	totalChecks := total + 1
+	totalChecks := total
+	if sub.Type != "power_platform" {
+		totalChecks++
+	}
 	if len(extractErrors) >= totalChecks {
 		reason := fmt.Sprintf("all %d data checks failed: %s", totalChecks, strings.Join(extractErrors, "; "))
 		failAndAlert(ctx, pool, auditID, sub, reason)
