@@ -3,15 +3,16 @@
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { LayoutDashboard, FileSearch, DollarSign, Globe, Users, Bell, AlertTriangle, LogOut, Menu, X } from 'lucide-react'
+import { LayoutDashboard, FileSearch, DollarSign, Globe, Users, Bell, AlertTriangle, LogOut, Menu, X, Blocks } from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import { Badge } from './Badge'
 import { roleConfig } from '../lib/utils'
 
 const navItems = [
-  { label: 'Dashboard',     href: '/',             icon: LayoutDashboard, exact: true  },
-  { label: 'Audits',        href: '/audits',        icon: FileSearch,      exact: false },
-  { label: 'Cost & Usage',  href: '/cost-usage',    icon: DollarSign,      exact: false },
+  { label: 'Dashboard',       href: '/',               icon: LayoutDashboard, exact: true  },
+  { label: 'Audits',          href: '/audits',          icon: FileSearch,      exact: false },
+  { label: 'Power Platform',  href: '/power-platform',  icon: Blocks,          exact: false },
+  { label: 'Cost & Usage',    href: '/cost-usage',      icon: DollarSign,      exact: false },
 ]
 // Visible to admin + analyst (same access as running Analyze) — not viewers,
 // since this exposes an internal data-collection detail, not a finding.
