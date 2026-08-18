@@ -10,7 +10,7 @@ import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import type { Subscription } from '../types'
 
-function truncGuid(v: string): string {
+function truncGuid(v: string | null): string {
   return v && v.length > 13 ? v.slice(0, 13) + '…' : v || '—'
 }
 
@@ -18,6 +18,7 @@ const mono: React.CSSProperties = { fontFamily: 'ui-monospace, monospace', fontS
 
 interface FormState {
   name: string
+  type: 'azure' | 'power_platform'
   subscription_id: string
   tenant_id: string
   client_id: string
@@ -26,7 +27,7 @@ interface FormState {
 }
 
 const emptyForm: FormState = {
-  name: '', subscription_id: '', tenant_id: '', client_id: '', client_secret: '', is_active: true,
+  name: '', type: 'azure', subscription_id: '', tenant_id: '', client_id: '', client_secret: '', is_active: true,
 }
 
 export default function SubscriptionsPage() {
@@ -69,7 +70,8 @@ export default function SubscriptionsPage() {
   function openEdit(sub: Subscription) {
     setForm({
       name: sub.name,
-      subscription_id: sub.subscription_id,
+      type: sub.type,
+      subscription_id: sub.subscription_id ?? '',
       tenant_id: sub.tenant_id,
       client_id: sub.client_id,
       client_secret: '',
@@ -84,12 +86,16 @@ export default function SubscriptionsPage() {
     e.preventDefault()
     setFormError('')
 
-    if (!form.name.trim() || !form.subscription_id.trim()) {
-      setFormError('Name and Subscription ID are required.')
+    if (!form.name.trim()) {
+      setFormError('Name is required.')
+      return
+    }
+    if (form.type === 'azure' && !form.subscription_id.trim()) {
+      setFormError('Subscription ID is required for an Azure subscription.')
       return
     }
     if (modal === 'add' && (!form.tenant_id.trim() || !form.client_id.trim() || !form.client_secret)) {
-      setFormError('All fields including client secret are required when adding.')
+      setFormError('Tenant ID, Client ID, and Client Secret are required when adding.')
       return
     }
 
@@ -98,7 +104,8 @@ export default function SubscriptionsPage() {
       if (modal === 'add') {
         await api.createSubscription({
           name: form.name.trim(),
-          subscription_id: form.subscription_id.trim(),
+          type: form.type,
+          subscription_id: form.type === 'azure' ? form.subscription_id.trim() : undefined,
           tenant_id: form.tenant_id.trim(),
           client_id: form.client_id.trim(),
           client_secret: form.client_secret,
@@ -200,7 +207,15 @@ export default function SubscriptionsPage() {
                 <tbody>
                   {subs.map(sub => (
                     <tr key={sub.id} className="row-hover" style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '0.7rem 0.75rem', color: 'var(--t1)', fontWeight: 500 }}>{sub.name}</td>
+                      <td style={{ padding: '0.7rem 0.75rem', color: 'var(--t1)', fontWeight: 500 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          {sub.name}
+                          <Badge
+                            color={sub.type === 'power_platform' ? 'purple' : 'info'}
+                            label={sub.type === 'power_platform' ? 'Power Platform' : 'Azure'}
+                          />
+                        </div>
+                      </td>
                       <td style={{ padding: '0.7rem 0.75rem', ...mono }}>{truncGuid(sub.subscription_id)}</td>
                       <td style={{ padding: '0.7rem 0.75rem', ...mono }}>{truncGuid(sub.tenant_id)}</td>
                       <td style={{ padding: '0.7rem 0.75rem', ...mono }}>{truncGuid(sub.client_id)}</td>
@@ -255,24 +270,50 @@ export default function SubscriptionsPage() {
               </div>
             )}
 
+            {modal === 'add' && (
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--t2)', display: 'block', marginBottom: '0.4rem' }}>Type</label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  {(['azure', 'power_platform'] as const).map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setForm(f => ({ ...f, type: t }))}
+                      style={{
+                        flex: 1, padding: '0.5rem', borderRadius: 8, cursor: 'pointer',
+                        border: `1px solid ${form.type === t ? 'var(--acc)' : 'var(--border)'}`,
+                        background: form.type === t ? 'var(--acc-soft)' : 'transparent',
+                        color: form.type === t ? 'var(--acc)' : 'var(--t2)',
+                        fontSize: '0.8rem', fontWeight: 500,
+                      }}
+                    >
+                      {t === 'azure' ? 'Azure Subscription' : 'Power Platform Tenant'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.78rem', fontWeight: 500, color: 'var(--t2)' }}>
               Name
               <input className="field" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Production Subscription" />
             </label>
 
-            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.78rem', fontWeight: 500, color: 'var(--t2)' }}>
-              Subscription ID
-              <input
-                className="field" style={{ fontFamily: 'ui-monospace, monospace' }}
-                value={form.subscription_id}
-                onChange={e => setForm(f => ({ ...f, subscription_id: e.target.value }))}
-                placeholder="00000000-0000-0000-0000-000000000000"
-                disabled={modal === 'edit'}
-              />
-            </label>
+            {form.type === 'azure' && (
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.78rem', fontWeight: 500, color: 'var(--t2)' }}>
+                Subscription ID
+                <input
+                  className="field" style={{ fontFamily: 'ui-monospace, monospace' }}
+                  value={form.subscription_id}
+                  onChange={e => setForm(f => ({ ...f, subscription_id: e.target.value }))}
+                  placeholder="00000000-0000-0000-0000-000000000000"
+                  disabled={modal === 'edit'}
+                />
+              </label>
+            )}
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.78rem', fontWeight: 500, color: 'var(--t2)' }}>
-              Tenant ID
+              {form.type === 'power_platform' ? 'Tenant (Directory) ID' : 'Tenant ID'}
               <input
                 className="field" style={{ fontFamily: 'ui-monospace, monospace' }}
                 value={form.tenant_id}
@@ -282,7 +323,7 @@ export default function SubscriptionsPage() {
             </label>
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.78rem', fontWeight: 500, color: 'var(--t2)' }}>
-              Client ID
+              {form.type === 'power_platform' ? 'Service Principal Client ID' : 'Client ID'}
               <input
                 className="field" style={{ fontFamily: 'ui-monospace, monospace' }}
                 value={form.client_id}
@@ -292,7 +333,7 @@ export default function SubscriptionsPage() {
             </label>
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.78rem', fontWeight: 500, color: 'var(--t2)' }}>
-              Client Secret
+              {form.type === 'power_platform' ? 'Service Principal Client Secret' : 'Client Secret'}
               <input
                 type="password"
                 className="field" style={{ fontFamily: 'ui-monospace, monospace' }}
