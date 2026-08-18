@@ -165,7 +165,7 @@ export default function SubscriptionsPage() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
           <p style={{ fontSize: '0.8rem', color: 'var(--t3)', flex: 1 }}>
-            {subs ? `${subs.length} Azure subscription${subs.length === 1 ? '' : 's'}` : '…'} · client secrets are AES-256 encrypted at rest and never shown again
+            {subs ? `${subs.length} subscription${subs.length === 1 ? '' : 's'}` : '…'} · client secrets are AES-256 encrypted at rest and never shown again
           </p>
           <button className="btn-primary" onClick={openAdd}>Add Subscription</button>
         </div>
@@ -182,7 +182,7 @@ export default function SubscriptionsPage() {
           <div className="glass" style={{ padding: '3rem 2rem', textAlign: 'center' }}>
             <p style={{ color: 'var(--t2)', fontSize: '0.875rem' }}>No subscriptions yet.</p>
             <p style={{ color: 'var(--t3)', fontSize: '0.78rem', marginTop: '0.375rem' }}>
-              Add an Azure subscription to include it in the daily audits.
+              Add a subscription to include it in the daily audits.
             </p>
           </div>
         )}
