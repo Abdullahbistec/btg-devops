@@ -76,6 +76,9 @@ export interface NormalizedFinding {
   description: string;
   recommendation: string;
   owner: string;
+  location: string;
+  monthly_cost: number | null;
+  monthly_saving: number | null;
 }
 
 interface RawFinding {
@@ -84,6 +87,9 @@ interface RawFinding {
   description?: string;
   recommendation?: string;
   owner?: string;
+  location?: string;
+  monthly_cost?: number;
+  monthly_saving?: number;
   // Azure fields
   account_name?: string;
   resource_name?: string;
@@ -112,6 +118,9 @@ interface RawFinding {
   name?: string;
   firewall_name?: string;
   cert_name?: string;
+  datacenter?: string;
+  home_location?: string;
+  est_monthly_waste_eur?: number;
 }
 
 function extractResource(raw: RawFinding): string {
@@ -128,6 +137,18 @@ function extractResource(raw: RawFinding): string {
     // in docs/consolidation-plan.md §2.2 / provider-extension-plan.md §1.9).
     raw.environment || ''
   );
+}
+
+export function extractLocation(raw: RawFinding): string {
+  return raw.location || raw.datacenter || raw.home_location || '';
+}
+
+export function extractMonthlyCost(raw: RawFinding): number | null {
+  return raw.monthly_cost ?? raw.est_monthly_waste_eur ?? null;
+}
+
+export function extractMonthlySaving(raw: RawFinding): number | null {
+  return raw.monthly_saving ?? null;
 }
 
 function runCommand(
@@ -224,6 +245,9 @@ export async function runSingleCommand(
       description: f.description || '',
       recommendation: f.recommendation || '',
       owner: f.owner || '',
+      location: extractLocation(f),
+      monthly_cost: extractMonthlyCost(f),
+      monthly_saving: extractMonthlySaving(f),
     })),
   };
 }

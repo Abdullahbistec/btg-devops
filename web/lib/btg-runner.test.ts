@@ -5,7 +5,7 @@
  * (add vitest to devDependencies first: npm i -D vitest)
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getPPCredentials, PP_SERVICE_LABELS } from './btg-runner';
+import { getPPCredentials, PP_SERVICE_LABELS, extractLocation, extractMonthlyCost, extractMonthlySaving } from './btg-runner';
 
 const BASE = {
   tenantId: 'base-tenant',
@@ -72,5 +72,41 @@ describe('PP_SERVICE_LABELS', () => {
   it('does not contain Azure service labels', () => {
     expect(PP_SERVICE_LABELS.has('Storage')).toBe(false);
     expect(PP_SERVICE_LABELS.has('Key Vault')).toBe(false);
+  });
+});
+
+describe('extractLocation', () => {
+  it('prefers the generic location field', () => {
+    expect(extractLocation({ location: 'eastus', datacenter: 'fsn1-dc14' } as any)).toBe('eastus');
+  });
+  it('falls back to datacenter (Hetzner servers)', () => {
+    expect(extractLocation({ datacenter: 'fsn1-dc14' } as any)).toBe('fsn1-dc14');
+  });
+  it('falls back to home_location (Hetzner floating IPs)', () => {
+    expect(extractLocation({ home_location: 'nbg1' } as any)).toBe('nbg1');
+  });
+  it('returns empty string when nothing is present', () => {
+    expect(extractLocation({} as any)).toBe('');
+  });
+});
+
+describe('extractMonthlyCost', () => {
+  it('prefers the generic monthly_cost field', () => {
+    expect(extractMonthlyCost({ monthly_cost: 12.5, est_monthly_waste_eur: 4 } as any)).toBe(12.5);
+  });
+  it('falls back to est_monthly_waste_eur (Hetzner volumes)', () => {
+    expect(extractMonthlyCost({ est_monthly_waste_eur: 4 } as any)).toBe(4);
+  });
+  it('returns null when nothing is present', () => {
+    expect(extractMonthlyCost({} as any)).toBeNull();
+  });
+});
+
+describe('extractMonthlySaving', () => {
+  it('returns the monthly_saving field when present', () => {
+    expect(extractMonthlySaving({ monthly_saving: 8 } as any)).toBe(8);
+  });
+  it('returns null when absent', () => {
+    expect(extractMonthlySaving({} as any)).toBeNull();
   });
 });
