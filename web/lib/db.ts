@@ -143,6 +143,9 @@ function initSchema(db: DatabaseSync) {
   try { db.exec(`ALTER TABLE audits ADD COLUMN current_step TEXT DEFAULT ''`); } catch {}
   try { db.exec(`ALTER TABLE audits ADD COLUMN total_steps INTEGER DEFAULT 0`); } catch {}
   try { db.exec(`ALTER TABLE audits ADD COLUMN completed_steps INTEGER DEFAULT 0`); } catch {}
+  try { db.exec(`ALTER TABLE findings ADD COLUMN location TEXT DEFAULT ''`); } catch {}
+  try { db.exec(`ALTER TABLE findings ADD COLUMN monthly_cost REAL DEFAULT NULL`); } catch {}
+  try { db.exec(`ALTER TABLE findings ADD COLUMN monthly_saving REAL DEFAULT NULL`); } catch {}
 
   // Seed default subscription from env vars if table is empty
   const row = db.prepare('SELECT COUNT(*) as c FROM subscriptions').get() as unknown as { c: number };
@@ -288,19 +291,22 @@ export interface Finding {
   description: string;
   recommendation: string;
   owner: string;
+  location: string;
+  monthly_cost: number | null;
+  monthly_saving: number | null;
   created_at: string;
 }
 
 export function insertFindings(auditId: string, findings: Omit<Finding, 'id' | 'audit_id' | 'created_at'>[]) {
   const db = getDB();
   const stmt = db.prepare(`
-    INSERT INTO findings (id, audit_id, service, resource, environment, severity, category, description, recommendation, owner)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO findings (id, audit_id, service, resource, environment, severity, category, description, recommendation, owner, location, monthly_cost, monthly_saving)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   db.exec('BEGIN');
   try {
     for (const f of findings) {
-      stmt.run(uuidv4(), auditId, f.service, f.resource, f.environment, f.severity, f.category, f.description, f.recommendation, f.owner || '');
+      stmt.run(uuidv4(), auditId, f.service, f.resource, f.environment, f.severity, f.category, f.description, f.recommendation, f.owner || '', f.location || '', f.monthly_cost ?? null, f.monthly_saving ?? null);
     }
     db.exec('COMMIT');
   } catch (e) {
