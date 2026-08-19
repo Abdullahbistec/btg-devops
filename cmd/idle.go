@@ -30,8 +30,20 @@ type IdleFinding struct {
 	ResourceGroup  string   `json:"resource_group"`
 	Description    string   `json:"description"`
 	Recommendation string   `json:"recommendation"`
-	MonthlyCost    float64  `json:"monthly_cost"`
-	MonthlySaving  float64  `json:"monthly_saving"`
+	MonthlyCost    *float64 `json:"monthly_cost,omitempty"`
+	MonthlySaving  *float64 `json:"monthly_saving,omitempty"`
+}
+
+// nonZeroPtr returns nil for a non-positive value rather than a pointer to
+// it — a positive-only cost/saving figure. Zero is deliberately treated as
+// "not computed" rather than "genuinely free," since this codebase already
+// uses 0 as an ambiguous sentinel elsewhere (see cmd/usage_publicip.go's
+// billing-delay handling) that this analyzer has no way to disambiguate.
+func nonZeroPtr(v float64) *float64 {
+	if v <= 0 {
+		return nil
+	}
+	return &v
 }
 
 type IdleSummary struct {
@@ -216,8 +228,8 @@ func computeIdleFindings(ctx context.Context, cred *azidentity.DefaultAzureCrede
 				ResourceGroup:  report.ResourceGroup,
 				Description:    report.WasteReason,
 				Recommendation: report.TopRecommendation,
-				MonthlyCost:    report.TotalCost,
-				MonthlySaving:  report.TotalSaving,
+				MonthlyCost:    nonZeroPtr(report.TotalCost),
+				MonthlySaving:  nonZeroPtr(report.TotalSaving),
 			})
 		}
 	}
@@ -272,8 +284,6 @@ func (idleProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) 
 func idleFindingsToProvider(findings []IdleFinding) []provider.Finding {
 	out := make([]provider.Finding, len(findings))
 	for i, f := range findings {
-		cost := f.MonthlyCost
-		saving := f.MonthlySaving
 		out[i] = provider.Finding{
 			Provider:       "azure",
 			Service:        "Idle & Waste",
@@ -282,8 +292,8 @@ func idleFindingsToProvider(findings []IdleFinding) []provider.Finding {
 			Resource:       f.ResourceName,
 			Description:    f.Description,
 			Recommendation: f.Recommendation,
-			MonthlyCost:    &cost,
-			MonthlySaving:  &saving,
+			MonthlyCost:    f.MonthlyCost,
+			MonthlySaving:  f.MonthlySaving,
 		}
 	}
 	return out

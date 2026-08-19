@@ -2,13 +2,12 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
-const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), 'btg-devops.db');
-
 let _db: DatabaseSync | null = null;
 
 export function getDB(): DatabaseSync {
   if (!_db) {
-    _db = new DatabaseSync(DB_PATH);
+    const dbPath = process.env.DATABASE_PATH || path.join(process.cwd(), 'btg-devops.db');
+    _db = new DatabaseSync(dbPath);
     _db.exec("PRAGMA journal_mode = WAL");
     initSchema(_db);
   }

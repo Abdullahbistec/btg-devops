@@ -53,6 +53,8 @@ func TestIdleCategory_LowAndHealthyProduceNoFinding(t *testing.T) {
 }
 
 func TestIdleFindingsToProvider_CarriesCostAndSaving(t *testing.T) {
+	cost := 12.5
+	saving := 12.5
 	findings := []IdleFinding{
 		{
 			Severity:       Critical,
@@ -62,8 +64,8 @@ func TestIdleFindingsToProvider_CarriesCostAndSaving(t *testing.T) {
 			ResourceGroup:  "rg-test",
 			Description:    "Idle for 30 days",
 			Recommendation: "Delete it",
-			MonthlyCost:    12.5,
-			MonthlySaving:  12.5,
+			MonthlyCost:    &cost,
+			MonthlySaving:  &saving,
 		},
 	}
 
@@ -77,5 +79,61 @@ func TestIdleFindingsToProvider_CarriesCostAndSaving(t *testing.T) {
 	}
 	if out[0].MonthlySaving == nil || *out[0].MonthlySaving != 12.5 {
 		t.Errorf("expected MonthlySaving 12.5, got %v", out[0].MonthlySaving)
+	}
+}
+
+func TestNonZeroPtr(t *testing.T) {
+	cases := []struct {
+		name  string
+		input float64
+		want  *float64
+	}{
+		{"positive value returns pointer", 12.5, ptrTo(12.5)},
+		{"zero returns nil", 0, nil},
+		{"negative returns nil", -1, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := nonZeroPtr(c.input)
+			if c.want == nil {
+				if got != nil {
+					t.Errorf("nonZeroPtr(%v) = %v, want nil", c.input, *got)
+				}
+				return
+			}
+			if got == nil || *got != *c.want {
+				t.Errorf("nonZeroPtr(%v) = %v, want %v", c.input, got, *c.want)
+			}
+		})
+	}
+}
+
+func ptrTo(v float64) *float64 { return &v }
+
+func TestIdleFindingsToProvider_ZeroCostBecomesNil(t *testing.T) {
+	findings := []IdleFinding{
+		{
+			Severity:       Critical,
+			Category:       "Zero Usage",
+			ResourceName:   "unused-ip",
+			ResourceType:   "microsoft.network/publicipaddresses",
+			ResourceGroup:  "rg-test",
+			Description:    "Idle for 30 days",
+			Recommendation: "Delete it",
+			MonthlyCost:    nonZeroPtr(0),
+			MonthlySaving:  nonZeroPtr(-1),
+		},
+	}
+
+	out := idleFindingsToProvider(findings)
+
+	if len(out) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(out))
+	}
+	if out[0].MonthlyCost != nil {
+		t.Errorf("expected MonthlyCost nil, got %v", *out[0].MonthlyCost)
+	}
+	if out[0].MonthlySaving != nil {
+		t.Errorf("expected MonthlySaving nil, got %v", *out[0].MonthlySaving)
 	}
 }

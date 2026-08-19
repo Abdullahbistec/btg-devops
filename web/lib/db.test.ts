@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
-process.env.DATABASE_PATH = ':memory:';
-
 import { getDB, insertFindings } from './db';
 
 function seedAuditAndSubscription() {
@@ -19,6 +17,11 @@ function seedAuditAndSubscription() {
 describe('insertFindings — location and cost columns', () => {
   beforeEach(() => {
     const db = getDB();
+    const dbList = db.prepare('PRAGMA database_list').all() as { name: string; file: string }[];
+    const mainDb = dbList.find(d => d.name === 'main');
+    if (mainDb && mainDb.file !== '') {
+      throw new Error(`db.test.ts refusing to run destructive setup against a non-in-memory database: ${mainDb.file}`);
+    }
     db.exec('DELETE FROM findings');
     db.exec('DELETE FROM audits');
     db.exec('DELETE FROM subscriptions');
