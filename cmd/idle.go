@@ -30,6 +30,8 @@ type IdleFinding struct {
 	ResourceGroup  string   `json:"resource_group"`
 	Description    string   `json:"description"`
 	Recommendation string   `json:"recommendation"`
+	MonthlyCost    float64  `json:"monthly_cost"`
+	MonthlySaving  float64  `json:"monthly_saving"`
 }
 
 type IdleSummary struct {
@@ -214,6 +216,8 @@ func computeIdleFindings(ctx context.Context, cred *azidentity.DefaultAzureCrede
 				ResourceGroup:  report.ResourceGroup,
 				Description:    report.WasteReason,
 				Recommendation: report.TopRecommendation,
+				MonthlyCost:    report.TotalCost,
+				MonthlySaving:  report.TotalSaving,
 			})
 		}
 	}
@@ -268,6 +272,8 @@ func (idleProviderAdapter) Run(ctx context.Context) ([]provider.Finding, error) 
 func idleFindingsToProvider(findings []IdleFinding) []provider.Finding {
 	out := make([]provider.Finding, len(findings))
 	for i, f := range findings {
+		cost := f.MonthlyCost
+		saving := f.MonthlySaving
 		out[i] = provider.Finding{
 			Provider:       "azure",
 			Service:        "Idle & Waste",
@@ -276,6 +282,8 @@ func idleFindingsToProvider(findings []IdleFinding) []provider.Finding {
 			Resource:       f.ResourceName,
 			Description:    f.Description,
 			Recommendation: f.Recommendation,
+			MonthlyCost:    &cost,
+			MonthlySaving:  &saving,
 		}
 	}
 	return out

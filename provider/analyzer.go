@@ -26,6 +26,9 @@ type Finding struct {
 	Environment    string   `json:"environment,omitempty"`
 	Description    string   `json:"description"`
 	Recommendation string   `json:"recommendation"`
+	Location       string   `json:"location,omitempty"`
+	MonthlyCost    *float64 `json:"monthly_cost,omitempty"`
+	MonthlySaving  *float64 `json:"monthly_saving,omitempty"`
 }
 
 // Analyzer is implemented by every check a provider registers. Name is the

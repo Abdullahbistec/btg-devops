@@ -51,3 +51,31 @@ func TestIdleCategory_LowAndHealthyProduceNoFinding(t *testing.T) {
 		}
 	}
 }
+
+func TestIdleFindingsToProvider_CarriesCostAndSaving(t *testing.T) {
+	findings := []IdleFinding{
+		{
+			Severity:       Critical,
+			Category:       "Zero Usage",
+			ResourceName:   "unused-ip",
+			ResourceType:   "microsoft.network/publicipaddresses",
+			ResourceGroup:  "rg-test",
+			Description:    "Idle for 30 days",
+			Recommendation: "Delete it",
+			MonthlyCost:    12.5,
+			MonthlySaving:  12.5,
+		},
+	}
+
+	out := idleFindingsToProvider(findings)
+
+	if len(out) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(out))
+	}
+	if out[0].MonthlyCost == nil || *out[0].MonthlyCost != 12.5 {
+		t.Errorf("expected MonthlyCost 12.5, got %v", out[0].MonthlyCost)
+	}
+	if out[0].MonthlySaving == nil || *out[0].MonthlySaving != 12.5 {
+		t.Errorf("expected MonthlySaving 12.5, got %v", out[0].MonthlySaving)
+	}
+}
