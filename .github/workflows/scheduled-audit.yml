@@ -12,6 +12,14 @@ on:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    # GitHub Actions disallows referencing `secrets` directly inside an `if:`
+    # expression (it errors with "Unrecognized named-value: 'secrets'") —
+    # secrets are only readable from `env:`/`with:` contexts, so each
+    # existence check is computed here once and read back via `env.*` below.
+    env:
+      HAS_AZURE_CREDS: ${{ secrets.AZURE_TENANT_ID != '' }}
+      HAS_PP_CREDS: ${{ secrets.AZURE_TENANT_ID != '' || secrets.BTG_PP_TENANT_ID != '' }}
+      HAS_HETZNER_TOKEN: ${{ secrets.HCLOUD_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -24,7 +32,7 @@ jobs:
         run: go build -o btg-devops .
 
       - name: Run Azure analyzers
-        if: ${{ secrets.AZURE_TENANT_ID != '' }}
+        if: ${{ env.HAS_AZURE_CREDS == 'true' }}
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -34,7 +42,7 @@ jobs:
         continue-on-error: true
 
       - name: Run Power Platform analyzers
-        if: ${{ secrets.AZURE_TENANT_ID != '' || secrets.BTG_PP_TENANT_ID != '' }}
+        if: ${{ env.HAS_PP_CREDS == 'true' }}
         env:
           AZURE_TENANT_ID: ${{ secrets.BTG_PP_TENANT_ID || secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.BTG_PP_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
@@ -43,7 +51,7 @@ jobs:
         continue-on-error: true
 
       - name: Run Hetzner analyzers
-        if: ${{ secrets.HCLOUD_TOKEN != '' }}
+        if: ${{ env.HAS_HETZNER_TOKEN == 'true' }}
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./btg-devops analyze hetzner --output json > hetzner-findings.json
