@@ -134,13 +134,20 @@ not logged, not committed, rotated if ever exposed.
 4. **Create the scheduled routine** at [claude.ai/code/routines](https://claude.ai/code/routines):
    - Add an MCP server connection pointing at your reachable `https://<host>/mcp` URL, with
      `Authorization: Bearer <MCP_BEARER_TOKEN>`.
-   - Set the routine's prompt to cover both queues, e.g.: *"First, call list_pending_requests. For
-     each pending request, call get_audit_data with its request_id, write a 3-5 sentence executive
-     risk summary of the findings context returned, then call save_analysis with that request_id
-     and your summary — or an error message instead of a summary if get_audit_data or the analysis
-     itself fails. Second, call list_pending_cost_requests. For each pending request, call
-     fetch_cost_data with its request_id — this does the entire refresh itself, so there's nothing
-     further to do for that request either way."*
+   - Set the routine's prompt to cover both queues, e.g.: *"You have an MCP connector already
+     attached with 5 tools: list_pending_requests, get_audit_data, save_analysis,
+     list_pending_cost_requests, fetch_cost_data. The request queue lives entirely behind these
+     tools — it is NOT a table or file in the connected repository, so do not read, clone, or
+     search the repository to look for it; ignore the repository connector for this task
+     entirely. Do this now, without asking any clarifying questions: First, call
+     list_pending_requests. For each pending request, call get_audit_data with its request_id,
+     write a 3-5 sentence executive risk summary of the findings context returned, then call
+     save_analysis with that request_id and your summary — or an error message instead of a
+     summary if get_audit_data or the analysis itself fails. Second, call
+     list_pending_cost_requests. For each pending request, call fetch_cost_data with its
+     request_id — this does the entire refresh itself, so there's nothing further to do for that
+     request either way. If either list call returns zero pending requests, that is a normal,
+     successful outcome — finish immediately, there is nothing to fabricate."*
    - Set the schedule to poll every few minutes (not once-daily) — both queues are meant to resolve
      within the dashboard's 10-minute poll timeouts (`POLL_TIMEOUT_MS` in `AssistantPanel.tsx`,
      `REFRESH_TIMEOUT_MS` in `web/app/cost/page.tsx`), not next-business-day.
