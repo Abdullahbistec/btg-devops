@@ -146,14 +146,6 @@ html[data-theme="light"] {
   color: #445580 !important;
 }
 
-/* ── Custom cursor (components/CursorFX.tsx) ─────────────────── */
-/* The class is only added once the effect mounts successfully and the
-   device supports hover — a JS failure or touch device leaves the native
-   cursor visible instead of vanishing it. */
-html.cursorfx-active, html.cursorfx-active * {
-  cursor: none !important;
-}
-
 /* ── Scrollbars ──────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

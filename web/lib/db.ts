@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { encryptSecret } from './crypto';
 
 let _db: DatabaseSync | null = null;
 
@@ -192,15 +193,23 @@ export function listSubscriptionsBasic(): { id: string; name: string; is_active:
 }
 
 export function getSubscription(id: string): Subscription | null {
-  return (getDB().prepare('SELECT * FROM subscriptions WHERE id = ?').get(id) ?? null) as unknown as Subscription | null;
+  return (getDB().prepare(`
+    SELECT id, name, subscription_id, tenant_id, client_id, is_active, created_at, last_audit_at
+    FROM subscriptions WHERE id = ?
+  `).get(id) ?? null) as unknown as Subscription | null;
 }
 
-export function createSubscription(data: Omit<Subscription, 'id' | 'created_at' | 'last_audit_at' | 'is_active'>): Subscription {
+export function createSubscription(
+  data: Omit<Subscription, 'id' | 'created_at' | 'last_audit_at' | 'is_active'> & { client_secret?: string }
+): Subscription {
   const id = uuidv4();
   getDB().prepare(`
-    INSERT INTO subscriptions (id, name, subscription_id, tenant_id, client_id)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(id, data.name, data.subscription_id, data.tenant_id, data.client_id);
+    INSERT INTO subscriptions (id, name, subscription_id, tenant_id, client_id, client_secret)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    id, data.name, data.subscription_id, data.tenant_id, data.client_id,
+    data.client_secret ? encryptSecret(data.client_secret) : ''
+  );
   return getSubscription(id)!;
 }
 
@@ -452,12 +461,22 @@ export function getCostFetchRequest(id: string): CostFetchRequest | null {
   return (getDB().prepare('SELECT * FROM cost_fetch_requests WHERE id = ?').get(id) ?? null) as unknown as CostFetchRequest | null;
 }
 
-/** The most recent request for a subscription that's still pending, if any —
- * used so the "Refresh" button doesn't queue a duplicate request while one
- * is already in flight for the same subscription. */
+/** The most recent request for a subscription that's still pending AND
+ * genuinely recent, if any — used so the "Refresh" button doesn't queue a
+ * duplicate request while one is already in flight for the same
+ * subscription. Since /api/cost-requests now processes a request
+ * synchronously in the same call that creates it, a 'pending' row should
+ * never outlive that one request — if one does (e.g. the process crashed
+ * mid-request, or a row was queued before this endpoint processed things
+ * synchronously), it's abandoned, not in flight, and must not permanently
+ * block every future refresh for that subscription. Two minutes is well
+ * beyond refreshCostSnapshot's own retry/backoff ceiling. */
 export function getPendingCostFetchRequestFor(subscriptionId: string): CostFetchRequest | null {
   return (getDB().prepare(
-    `SELECT * FROM cost_fetch_requests WHERE subscription_id = ? AND status = 'pending' ORDER BY requested_at DESC LIMIT 1`
+    `SELECT * FROM cost_fetch_requests
+     WHERE subscription_id = ? AND status = 'pending'
+       AND requested_at > datetime('now', '-2 minutes')
+     ORDER BY requested_at DESC LIMIT 1`
   ).get(subscriptionId) ?? null) as unknown as CostFetchRequest | null;
 }
 

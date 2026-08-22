@@ -9,6 +9,7 @@ import {
 } from '@/lib/db';
 import { runAllCommands, ALL_COMMANDS, Command, getPPCredentials, isHetznerCommand } from '@/lib/btg-runner';
 import { sendAuditSummaryEmail, sendScheduleFailureEmail, getNotificationRecipients } from '@/lib/mailer';
+import { decryptSecret } from '@/lib/crypto';
 
 export class AuditExecutorError extends Error {}
 
@@ -33,7 +34,7 @@ export async function executeAudit(
   const credentials = {
     tenantId: sub.tenant_id || process.env.AZURE_TENANT_ID || '',
     clientId: sub.client_id || process.env.AZURE_CLIENT_ID || '',
-    clientSecret: row?.client_secret || process.env.AZURE_CLIENT_SECRET || '',
+    clientSecret: (row?.client_secret ? decryptSecret(row.client_secret) : '') || process.env.AZURE_CLIENT_SECRET || '',
     subscriptionId: sub.subscription_id || process.env.AZURE_SUBSCRIPTION_ID || '',
   };
 

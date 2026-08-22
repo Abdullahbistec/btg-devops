@@ -2,20 +2,15 @@
 import { useEffect, useRef } from 'react';
 
 /**
- * Site-wide ambient background: an animated particle network plus a custom
- * cursor (slow-lagging ring + fast gold core). Mounted once in the root
- * layout so it applies to every page.
+ * Site-wide ambient background: an animated particle network. Mounted once
+ * in the root layout so it applies to every page.
  *
- * Deliberately reads --accent/--warn from CSS instead of hardcoding colors,
- * so it matches whichever theme (dark/light) is active rather than fighting
- * globals.css's own theme system. The native cursor is only hidden after
- * the effect successfully mounts (via a class on <html>), so a JS failure
- * degrades to "cursor visible," never "cursor invisible."
+ * Deliberately reads --accent from CSS instead of hardcoding a color, so it
+ * matches whichever theme (dark/light) is active rather than fighting
+ * globals.css's own theme system.
  */
 export default function CursorFX() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const ringRef = useRef<HTMLDivElement>(null);
-  const dotRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -26,7 +21,6 @@ export default function CursorFX() {
     const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const style = getComputedStyle(document.documentElement);
     const accent = style.getPropertyValue('--accent').trim() || '#00C2FF';
-    const gold = style.getPropertyValue('--warn').trim() || '#FFA502';
     const lineRGB = hexToRGB(accent);
 
     let w = 0, h = 0, dpr = 1;
@@ -83,79 +77,16 @@ export default function CursorFX() {
     addEventListener('resize', resize);
     if (reduceMotion) draw(); else rafId = requestAnimationFrame(frame);
 
-    // ---------- cursor tracker ----------
-    const ring = ringRef.current, dot = dotRef.current;
-    const canHover = matchMedia('(hover:hover)').matches;
-    let cleanupCursor = () => {};
-
-    if (ring && dot && canHover) {
-      document.documentElement.classList.add('cursorfx-active');
-      let mx = innerWidth / 2, my = innerHeight / 2;
-      let rx = mx, ry = my, dx = mx, dy = my;
-      let shown = false, pressed = false, cursorRaf = 0;
-
-      const onMove = (e: MouseEvent) => {
-        mx = e.clientX; my = e.clientY;
-        if (!shown) { ring.style.opacity = '1'; dot.style.opacity = '1'; shown = true; }
-      };
-      const onOut = (e: MouseEvent) => {
-        if (!e.relatedTarget) { ring.style.opacity = '0'; dot.style.opacity = '0'; shown = false; }
-      };
-      const onDown = () => { pressed = true; };
-      const onUp = () => { pressed = false; };
-
-      addEventListener('mousemove', onMove);
-      addEventListener('mouseout', onOut);
-      addEventListener('mousedown', onDown);
-      addEventListener('mouseup', onUp);
-
-      const kr = reduceMotion ? 1 : 0.12;
-      const kd = reduceMotion ? 1 : 0.35;
-      const cursorTick = () => {
-        rx += (mx - rx) * kr; ry += (my - ry) * kr;
-        dx += (mx - dx) * kd; dy += (my - dy) * kd;
-        ring.style.transform = `translate(${rx}px,${ry}px) scale(${pressed ? 0.72 : 1})`;
-        dot.style.transform = `translate(${dx}px,${dy}px)`;
-        cursorRaf = requestAnimationFrame(cursorTick);
-      };
-      cursorTick();
-
-      cleanupCursor = () => {
-        document.documentElement.classList.remove('cursorfx-active');
-        removeEventListener('mousemove', onMove);
-        removeEventListener('mouseout', onOut);
-        removeEventListener('mousedown', onDown);
-        removeEventListener('mouseup', onUp);
-        cancelAnimationFrame(cursorRaf);
-      };
-    }
-
     return () => {
       removeEventListener('resize', resize);
       cancelAnimationFrame(rafId);
-      cleanupCursor();
     };
   }, []);
 
   return (
-    <>
-      <canvas ref={canvasRef} aria-hidden="true" style={{
-        position: 'fixed', inset: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none',
-      }} />
-      <div ref={ringRef} aria-hidden="true" style={{
-        position: 'fixed', top: 0, left: 0, zIndex: 999998, pointerEvents: 'none',
-        width: 54, height: 54, margin: '-27px 0 0 -27px', borderRadius: '50%',
-        border: '1.5px solid var(--accent)',
-        boxShadow: '0 0 22px 4px color-mix(in srgb, var(--accent) 35%, transparent), inset 0 0 14px color-mix(in srgb, var(--accent) 25%, transparent)',
-        opacity: 0, transition: 'opacity .25s ease', willChange: 'transform',
-      }} />
-      <div ref={dotRef} aria-hidden="true" style={{
-        position: 'fixed', top: 0, left: 0, zIndex: 999999, pointerEvents: 'none',
-        width: 9, height: 9, margin: '-4.5px 0 0 -4.5px', borderRadius: '50%',
-        background: 'var(--warn)', boxShadow: '0 0 12px 2px color-mix(in srgb, var(--warn) 70%, transparent)',
-        opacity: 0, transition: 'opacity .25s ease', willChange: 'transform',
-      }} />
-    </>
+    <canvas ref={canvasRef} aria-hidden="true" style={{
+      position: 'fixed', inset: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none',
+    }} />
   );
 }
 

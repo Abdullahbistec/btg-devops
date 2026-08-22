@@ -4,7 +4,6 @@ import { createPortal } from 'react-dom';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import KPICard from '@/components/KPICard';
-import AssistantPanel from '@/components/AssistantPanel';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip,
   BarChart, Bar, Cell, PieChart, Pie,
@@ -285,9 +284,6 @@ function DashboardInner() {
                     <ComplianceList findings={findings} />
                   </Card>
                 </div>
-
-                {/* AI ASSISTANT */}
-                <AssistantPanel auditId={data?.resolvedAuditId ?? ''} />
 
                 {/* FINDINGS TABLE */}
                 <FindingsCard findings={findings} svcTabs={meta.svcTabs} label={meta.findingsLabel} />

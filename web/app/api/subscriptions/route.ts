@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
       subscription_id: body.subscription_id,
       tenant_id: body.tenant_id,
       client_id: body.client_id,
+      client_secret: body.client_secret,
     });
     return NextResponse.json(sub, { status: 201 });
   } catch (e) {

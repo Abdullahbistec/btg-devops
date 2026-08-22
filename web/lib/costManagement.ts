@@ -1,4 +1,5 @@
 import { getDB, getSubscription, saveCostSnapshot } from '@/lib/db';
+import { decryptSecret } from '@/lib/crypto';
 
 interface CostRow {
   cost: number;
@@ -39,6 +40,19 @@ async function fetchWithRetry(url: string, init: RequestInit, maxAttempts = 3): 
     }
   }
   throw lastError instanceof Error ? lastError : new Error('fetchWithRetry: exhausted retries');
+}
+
+/** Turns a raw Retry-After header (seconds, per RFC 9110 — Azure always
+ * sends the delta-seconds form here, never an HTTP-date) into a human
+ * sentence fragment to append to an error message. Empty string if the
+ * header is missing or unparseable, so the message degrades gracefully to
+ * what it said before this was added. */
+function formatRetryAfter(retryAfterHeader: string | null): string {
+  const seconds = retryAfterHeader ? parseInt(retryAfterHeader, 10) : NaN;
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  if (seconds < 60) return ` Try again in about ${seconds} second${seconds === 1 ? '' : 's'}.`;
+  const minutes = Math.round(seconds / 60);
+  return ` Try again in about ${minutes} minute${minutes === 1 ? '' : 's'}.`;
 }
 
 async function getArmToken(tenantId: string, clientId: string, clientSecret: string): Promise<string> {
@@ -94,7 +108,7 @@ export async function fetchLiveCostSpend(sub: { id: string; name: string }, tena
   if (!costRes.ok) {
     const errBody = await costRes.text();
     const message = costRes.status === 429
-      ? 'Azure Cost Management is rate-limiting this tenant right now — it retried automatically and still failed.'
+      ? `Azure Cost Management is rate-limiting this tenant right now — it retried automatically and still failed.${formatRetryAfter(costRes.headers.get('Retry-After'))}`
       : `Cost Management API error: ${errBody.slice(0, 500)}`;
     throw new Error(message);
   }
@@ -157,7 +171,7 @@ export async function refreshCostSnapshot(subscriptionId: string): Promise<CostP
   const row = db.prepare('SELECT client_secret FROM subscriptions WHERE id = ?').get(subscriptionId) as { client_secret: string } | null;
   const tenantId = sub.tenant_id || process.env.AZURE_TENANT_ID || '';
   const clientId = sub.client_id || process.env.AZURE_CLIENT_ID || '';
-  const clientSecret = row?.client_secret || process.env.AZURE_CLIENT_SECRET || '';
+  const clientSecret = (row?.client_secret ? decryptSecret(row.client_secret) : '') || process.env.AZURE_CLIENT_SECRET || '';
   const azureSubId = sub.subscription_id || process.env.AZURE_SUBSCRIPTION_ID || '';
 
   if (!tenantId || !clientId || !clientSecret || !azureSubId) {

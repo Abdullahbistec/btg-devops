@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDB, getSubscription, createCostFetchRequest, getPendingCostFetchRequestFor } from '@/lib/db';
+import {
+  getDB, getSubscription, createCostFetchRequest, getPendingCostFetchRequestFor,
+  completeCostFetchRequest, failCostFetchRequest,
+} from '@/lib/db';
+import { refreshCostSnapshot } from '@/lib/costManagement';
 
-/** Creates a pending cost-refresh request. A scheduled Claude Code routine,
- * polling through the MCP server (cmd/mcp.go --http), picks it up and calls
- * back into /api/internal/cost-requests/[id]/fetch to do the actual live
- * Azure call. See docs/ai-analysis-routine-setup.md. */
+/** Creates a cost-refresh request and processes it immediately, in-process —
+ * no MCP server or scheduled Claude Code routine required. That routine
+ * (docs/ai-analysis-routine-setup.md) exists to protect a *multi-tenant*
+ * deployment from Azure Cost Management's tight rate limit when many
+ * concurrent dashboard users could otherwise trigger overlapping live calls;
+ * a single local "Refresh" click has no such contention, so there's no
+ * reason to make the user wait on infrastructure that isn't running. The
+ * queued `cost_fetch_requests` row (and the polling on /api/cost-requests/:id
+ * the frontend already does) is left in place — a routine, if one is ever
+ * configured, can still pick up and complete a request this route left
+ * pending for any reason (e.g. a crash mid-request). */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -21,6 +32,15 @@ export async function POST(req: NextRequest) {
     // subscription — the routine polls on its own schedule regardless.
     const existing = getPendingCostFetchRequestFor(subscriptionId);
     const request = existing ?? createCostFetchRequest(subscriptionId);
+
+    if (!existing) {
+      try {
+        await refreshCostSnapshot(subscriptionId);
+        completeCostFetchRequest(request.id);
+      } catch (e) {
+        failCostFetchRequest(request.id, (e as Error).message);
+      }
+    }
 
     return NextResponse.json({ id: request.id, status: request.status }, { status: 202 });
   } catch (e) {
