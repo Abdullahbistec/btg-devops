@@ -49,6 +49,36 @@ interface SpendData {
 const REFRESH_POLL_MS = 4000;
 const REFRESH_TIMEOUT_MS = 10 * 60 * 1000; // the routine polls every few minutes — give it real headroom
 
+function BreakdownCard({ title, rows, total, currency, color }: {
+  title: string; rows: { name: string; cost: number }[]; total: number; currency: string; color: string;
+}) {
+  return (
+    <div className="glass" style={{ borderRadius: 10, padding: '16px 18px' }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>{title}</div>
+      {rows.length === 0 && <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 16 }}>No spend recorded yet this period.</div>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {rows.slice(0, 12).map(r => {
+          const share = total > 0 ? (r.cost / total) * 100 : 0;
+          return (
+            <div key={r.name}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 12, marginBottom: 4 }}>
+                <span style={{ color: 'var(--text)', fontWeight: 500 }}>{r.name}</span>
+                <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ color: 'var(--muted)', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>{share.toFixed(0)}%</span>
+                  <span style={{ color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{r.cost.toLocaleString(undefined, { style: 'currency', currency })}</span>
+                </span>
+              </div>
+              <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${Math.max(share, share > 0 ? 1.5 : 0)}%`, background: color, borderRadius: 2 }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function SpendView() {
   const [data, setData] = useState<SpendData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -141,51 +171,30 @@ function SpendView() {
 
       {!error && data && !data.noData && (
         <>
-          <div className="glass" style={{ borderRadius: 8, padding: '18px 20px' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
-              Total Spend — {data.subscription.name} (Month-to-Date)
+          <div className="glass" style={{ borderRadius: 10, padding: '22px 24px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 2, flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                {data.subscription.name}
+              </div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: ACCENT, background: `${ACCENT}18`, border: `1px solid ${ACCENT}40`, borderRadius: 999, padding: '2px 9px' }}>
+                Month-to-date
+              </div>
             </div>
-            <div style={{ fontSize: 34, fontWeight: 800, color: ACCENT, fontVariantNumeric: 'tabular-nums' }}>
-              {data.totalCost.toLocaleString(undefined, { style: 'currency', currency: data.currency })}
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 8 }}>
+              <span style={{ fontSize: 44, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em' }}>
+                {data.totalCost.toLocaleString(undefined, { style: 'currency', currency: data.currency })}
+              </span>
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)' }}>spent</span>
             </div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div className="glass" style={{ borderRadius: 8, padding: '14px 16px' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>By Service</div>
-              {data.byService.length === 0 && <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 16 }}>No spend recorded yet this period.</div>}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-                {data.byService.slice(0, 12).map(s => (
-                  <div key={s.name}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 2 }}>
-                      <span style={{ color: 'var(--text)' }}>{s.name}</span>
-                      <span style={{ color: ACCENT, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.cost.toLocaleString(undefined, { style: 'currency', currency: data.currency })}</span>
-                    </div>
-                    <div style={{ height: 3, background: 'var(--border)', borderRadius: 2 }}>
-                      <div style={{ height: '100%', width: `${Math.min(100, (s.cost / (data.totalCost || 1)) * 100)}%`, background: ACCENT, borderRadius: 2 }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <BreakdownCard title="By Service" rows={data.byService} total={data.totalCost} currency={data.currency} color={ACCENT} />
+            <BreakdownCard title="By Resource Group" rows={data.byResourceGroup} total={data.totalCost} currency={data.currency} color={WARN} />
+          </div>
 
-            <div className="glass" style={{ borderRadius: 8, padding: '14px 16px' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>By Resource Group</div>
-              {data.byResourceGroup.length === 0 && <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 16 }}>No spend recorded yet this period.</div>}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-                {data.byResourceGroup.slice(0, 12).map(rg => (
-                  <div key={rg.name}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 2 }}>
-                      <span style={{ color: 'var(--text)' }}>{rg.name}</span>
-                      <span style={{ color: WARN, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{rg.cost.toLocaleString(undefined, { style: 'currency', currency: data.currency })}</span>
-                    </div>
-                    <div style={{ height: 3, background: 'var(--border)', borderRadius: 2 }}>
-                      <div style={{ height: '100%', width: `${Math.min(100, (rg.cost / (data.totalCost || 1)) * 100)}%`, background: WARN, borderRadius: 2 }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>
+            Cost is measured from Azure Cost Management. This may differ from your final invoice.
           </div>
         </>
       )}
