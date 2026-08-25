@@ -81,6 +81,13 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         run: node scripts/run-scheduled-audit.js
 
+      - name: Request a daily cost refresh, if deployed
+        env:
+          DASHBOARD_BASE_URL: ${{ vars.DASHBOARD_BASE_URL }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: node scripts/run-scheduled-cost-refresh.js
+
       - name: Report failure
         if: failure()
         run: echo "::error::Scheduled governance audit had a failing step — check the logs above."
