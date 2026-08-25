@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
-import { getDB, insertFindings } from './db';
+import { getDB, insertFindings, saveCostSnapshot } from './db';
 
 function seedAuditAndSubscription() {
   const db = getDB();
@@ -70,5 +70,60 @@ describe('insertFindings — location and cost columns', () => {
     expect(row.location).toBe('');
     expect(row.monthly_cost).toBeNull();
     expect(row.monthly_saving).toBeNull();
+  });
+});
+
+describe('saveCostSnapshot — history', () => {
+  beforeEach(() => {
+    const db = getDB();
+    const dbList = db.prepare('PRAGMA database_list').all() as { name: string; file: string }[];
+    const mainDb = dbList.find(d => d.name === 'main');
+    if (mainDb && mainDb.file !== '') {
+      throw new Error(`db.test.ts refusing to run destructive setup against a non-in-memory database: ${mainDb.file}`);
+    }
+    db.exec('DELETE FROM cost_snapshot_history');
+    db.exec('DELETE FROM cost_snapshots');
+    db.exec('DELETE FROM findings');
+    db.exec('DELETE FROM audits');
+    db.exec('DELETE FROM subscriptions');
+    db.prepare(`
+      INSERT INTO subscriptions (id, name, subscription_id, tenant_id, client_id)
+      VALUES ('sub-1', 'Test Sub', 'sub-guid', 'tenant-guid', 'client-guid')
+    `).run();
+  });
+
+  it('writes a history row alongside the latest-value row', () => {
+    saveCostSnapshot('sub-1', {
+      totalCost: 100, currency: 'USD',
+      byService: [{ name: 'Virtual Machines', cost: 60 }, { name: 'Storage', cost: 40 }],
+      byResourceGroup: [{ name: 'rg-1', cost: 100 }],
+    });
+
+    const history = getDB().prepare('SELECT * FROM cost_snapshot_history WHERE subscription_id = ?').all('sub-1') as {
+      subscription_id: string; snapshot_date: string; total_cost: number; currency: string; by_service: string; fetched_at: string;
+    }[];
+    expect(history).toHaveLength(1);
+    expect(history[0].total_cost).toBe(100);
+    expect(history[0].currency).toBe('USD');
+    expect(JSON.parse(history[0].by_service)).toEqual([{ name: 'Virtual Machines', cost: 60 }, { name: 'Storage', cost: 40 }]);
+    expect(history[0].snapshot_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('overwrites the same day\'s row on a second refresh the same day, not a duplicate', () => {
+    saveCostSnapshot('sub-1', { totalCost: 100, currency: 'USD', byService: [], byResourceGroup: [] });
+    saveCostSnapshot('sub-1', { totalCost: 150, currency: 'USD', byService: [{ name: 'VMs', cost: 150 }], byResourceGroup: [] });
+
+    const history = getDB().prepare('SELECT * FROM cost_snapshot_history WHERE subscription_id = ?').all('sub-1') as { total_cost: number }[];
+    expect(history).toHaveLength(1);
+    expect(history[0].total_cost).toBe(150);
+  });
+
+  it('does not carry by_resource_group into history', () => {
+    saveCostSnapshot('sub-1', {
+      totalCost: 100, currency: 'USD', byService: [],
+      byResourceGroup: [{ name: 'rg-1', cost: 100 }],
+    });
+    const cols = getDB().prepare('PRAGMA table_info(cost_snapshot_history)').all() as { name: string }[];
+    expect(cols.map(c => c.name)).not.toContain('by_resource_group');
   });
 });

@@ -134,6 +134,25 @@ function initSchema(db: DatabaseSync) {
       completed_at   TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_cost_fetch_requests_status ON cost_fetch_requests(status);
+
+    -- Append-only daily history behind cost_snapshots — that table only
+    -- ever holds the latest value (ON CONFLICT DO UPDATE on
+    -- subscription_id), so a trend chart has nothing to read. This table
+    -- is written alongside it, from the same saveCostSnapshot() call, so
+    -- there is exactly one place a snapshot is ever produced. One row per
+    -- subscription per calendar day — a second same-day refresh updates
+    -- that day's row rather than inserting a duplicate. See
+    -- docs/superpowers/specs/2026-08-25-cost-snapshot-history-design.md.
+    CREATE TABLE IF NOT EXISTS cost_snapshot_history (
+      subscription_id TEXT NOT NULL,
+      snapshot_date    TEXT NOT NULL,
+      total_cost       REAL NOT NULL,
+      currency         TEXT NOT NULL,
+      by_service       TEXT NOT NULL,
+      fetched_at       TEXT NOT NULL,
+      PRIMARY KEY (subscription_id, snapshot_date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cost_snapshot_history_sub ON cost_snapshot_history(subscription_id, snapshot_date);
   `);
 
   // Migrations
@@ -430,7 +449,8 @@ export function getCostSnapshot(subscriptionId: string): CostSnapshot | null {
 }
 
 export function saveCostSnapshot(subscriptionId: string, data: { totalCost: number; currency: string; byService: unknown; byResourceGroup: unknown }): void {
-  getDB().prepare(`
+  const db = getDB();
+  db.prepare(`
     INSERT INTO cost_snapshots (subscription_id, total_cost, currency, by_service, by_resource_group, fetched_at)
     VALUES (?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(subscription_id) DO UPDATE SET
@@ -440,6 +460,16 @@ export function saveCostSnapshot(subscriptionId: string, data: { totalCost: numb
       by_resource_group = excluded.by_resource_group,
       fetched_at = excluded.fetched_at
   `).run(subscriptionId, data.totalCost, data.currency, JSON.stringify(data.byService), JSON.stringify(data.byResourceGroup));
+
+  db.prepare(`
+    INSERT INTO cost_snapshot_history (subscription_id, snapshot_date, total_cost, currency, by_service, fetched_at)
+    VALUES (?, date('now', 'localtime'), ?, ?, ?, datetime('now'))
+    ON CONFLICT(subscription_id, snapshot_date) DO UPDATE SET
+      total_cost = excluded.total_cost,
+      currency = excluded.currency,
+      by_service = excluded.by_service,
+      fetched_at = excluded.fetched_at
+  `).run(subscriptionId, data.totalCost, data.currency, JSON.stringify(data.byService));
 }
 
 export interface CostFetchRequest {
