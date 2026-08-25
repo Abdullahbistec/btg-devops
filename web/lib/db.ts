@@ -472,6 +472,23 @@ export function saveCostSnapshot(subscriptionId: string, data: { totalCost: numb
   `).run(subscriptionId, data.totalCost, data.currency, JSON.stringify(data.byService));
 }
 
+export interface CostSnapshotHistoryRow {
+  subscription_id: string;
+  snapshot_date: string;
+  total_cost: number;
+  currency: string;
+  by_service: string; // JSON-encoded { name, cost }[]
+  fetched_at: string;
+}
+
+export function getCostSnapshotHistory(subscriptionId: string, days: number): CostSnapshotHistoryRow[] {
+  return getDB().prepare(`
+    SELECT * FROM cost_snapshot_history
+    WHERE subscription_id = ? AND snapshot_date >= date('now', '-' || ? || ' days')
+    ORDER BY snapshot_date ASC
+  `).all(subscriptionId, days) as unknown as CostSnapshotHistoryRow[];
+}
+
 export interface CostFetchRequest {
   id: string;
   subscription_id: string;

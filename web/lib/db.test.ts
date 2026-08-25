@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
-import { getDB, insertFindings, saveCostSnapshot } from './db';
+import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory } from './db';
 
 function seedAuditAndSubscription() {
   const db = getDB();
@@ -125,5 +125,25 @@ describe('saveCostSnapshot — history', () => {
     });
     const cols = getDB().prepare('PRAGMA table_info(cost_snapshot_history)').all() as { name: string }[];
     expect(cols.map(c => c.name)).not.toContain('by_resource_group');
+  });
+
+  it('getCostSnapshotHistory returns rows oldest-to-newest within the day window', () => {
+    const db = getDB();
+    // Insert two history rows directly, one 5 days ago (in-window for days=7,
+    // out for days=3) and one today, to test both ordering and the day filter.
+    db.prepare(`
+      INSERT INTO cost_snapshot_history (subscription_id, snapshot_date, total_cost, currency, by_service, fetched_at)
+      VALUES ('sub-1', date('now', '-5 days'), 80, 'USD', '[]', datetime('now', '-5 days'))
+    `).run();
+    saveCostSnapshot('sub-1', { totalCost: 120, currency: 'USD', byService: [{ name: 'VMs', cost: 120 }], byResourceGroup: [] });
+
+    const sevenDays = getCostSnapshotHistory('sub-1', 7);
+    expect(sevenDays).toHaveLength(2);
+    expect(sevenDays[0].total_cost).toBe(80);   // older row first
+    expect(sevenDays[1].total_cost).toBe(120);  // today's row last
+
+    const threeDays = getCostSnapshotHistory('sub-1', 3);
+    expect(threeDays).toHaveLength(1);
+    expect(threeDays[0].total_cost).toBe(120);
   });
 });
