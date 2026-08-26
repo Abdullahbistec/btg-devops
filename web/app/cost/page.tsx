@@ -1,6 +1,7 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import Sidebar from '@/components/Sidebar';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
 
 interface CostFinding {
   id: string;
@@ -48,6 +49,160 @@ interface SpendData {
 
 const REFRESH_POLL_MS = 4000;
 const REFRESH_TIMEOUT_MS = 10 * 60 * 1000; // the routine polls every few minutes — give it real headroom
+
+// Minimum real history points before a line is meaningful — below this,
+// show an honest "still accumulating" placeholder instead of a near-empty
+// chart that reads as broken.
+const MIN_HISTORY_POINTS = 3;
+
+interface HistoryPoint {
+  date: string;
+  totalCost: number;
+  byService: { name: string; cost: number }[];
+}
+interface HistoryData {
+  subscription: { id: string; name: string };
+  currency: string;
+  timeframe: string;
+  points: HistoryPoint[];
+}
+
+const SPAN_OPTIONS = [
+  { label: '1 month', days: 30 },
+  { label: '2 months', days: 60 },
+  { label: '3 months', days: 90 },
+] as const;
+
+function toISODate(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function shortDate(iso: string) {
+  return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function SpendHistoryChart({ subscriptionId }: { subscriptionId: string }) {
+  const [span, setSpan] = useState<number>(SPAN_OPTIONS[0].days);
+  const [custom, setCustom] = useState<{ from: string; to: string } | null>(null);
+  const [history, setHistory] = useState<HistoryData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
+    // The API only understands "last N days from today" — a custom range
+    // is translated into that same call, then filtered client-side to the
+    // picked window. Good enough for a first pass; the API can grow an
+    // explicit from/to if that ever stops being sufficient.
+    const days = custom
+      ? Math.max(1, Math.ceil((new Date(custom.to).getTime() - new Date(custom.from).getTime()) / 86400000) + 1)
+      : span;
+    fetch(`/api/cost/history?subscription_id=${subscriptionId}&days=${days}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.error) { setError(d.error); setLoading(false); return; }
+        setHistory(d);
+        setLoading(false);
+      })
+      .catch(e => { setError(String(e)); setLoading(false); });
+  }, [subscriptionId, span, custom]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const points = useMemo(() => {
+    if (!history) return [];
+    if (!custom) return history.points;
+    return history.points.filter(p => p.date >= custom.from && p.date <= custom.to);
+  }, [history, custom]);
+
+  return (
+    <div className="glass" style={{ borderRadius: 10, padding: '18px 20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Spend History {history && `— ${history.timeframe === 'MonthToDate' ? 'month-to-date totals, per day' : history.timeframe}`}
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {SPAN_OPTIONS.map(opt => (
+            <button key={opt.days} onClick={() => { setCustom(null); setSpan(opt.days); }} style={{
+              padding: '3px 10px', fontSize: 10, fontWeight: 700, borderRadius: 999, cursor: 'pointer',
+              background: !custom && span === opt.days ? ACCENT : 'transparent',
+              border: `1px solid ${!custom && span === opt.days ? ACCENT : 'var(--border)'}`,
+              color: !custom && span === opt.days ? '#fff' : 'var(--muted)',
+            }}>
+              {opt.label}
+            </button>
+          ))}
+          <button onClick={() => setCustom(c => c ? null : {
+            from: toISODate(new Date(Date.now() - 30 * 86400000)),
+            to: toISODate(new Date()),
+          })} style={{
+            padding: '3px 10px', fontSize: 10, fontWeight: 700, borderRadius: 999, cursor: 'pointer',
+            background: custom ? ACCENT : 'transparent',
+            border: `1px solid ${custom ? ACCENT : 'var(--border)'}`,
+            color: custom ? '#fff' : 'var(--muted)',
+          }}>
+            Custom range
+          </button>
+        </div>
+      </div>
+
+      {custom && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+          <label style={{ fontSize: 10, color: 'var(--muted)', display: 'flex', flexDirection: 'column', gap: 3 }}>
+            From
+            <input type="date" value={custom.from} max={custom.to}
+              onChange={e => setCustom(c => c && { ...c, from: e.target.value })}
+              style={{ fontSize: 11, background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 3, padding: '4px 8px' }} />
+          </label>
+          <label style={{ fontSize: 10, color: 'var(--muted)', display: 'flex', flexDirection: 'column', gap: 3 }}>
+            To
+            <input type="date" value={custom.to} min={custom.from} max={toISODate(new Date())}
+              onChange={e => setCustom(c => c && { ...c, to: e.target.value })}
+              style={{ fontSize: 11, background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 3, padding: '4px 8px' }} />
+          </label>
+        </div>
+      )}
+
+      {loading && <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 32 }}>Loading…</div>}
+
+      {!loading && error && (
+        <div style={{ fontSize: 12, color: CRIT, textAlign: 'center', padding: 32 }}>⚠ {error}</div>
+      )}
+
+      {!loading && !error && points.length < MIN_HISTORY_POINTS && (
+        <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--muted)', fontSize: 12 }}>
+          Accumulating daily history — check back in a few days.<br />
+          <span style={{ fontSize: 11 }}>{points.length} day{points.length === 1 ? '' : 's'} recorded so far.</span>
+        </div>
+      )}
+
+      {!loading && !error && points.length >= MIN_HISTORY_POINTS && (
+        <>
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={points} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+              <defs>
+                <linearGradient id="spendHistoryFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={ACCENT} stopOpacity={0.3} />
+                  <stop offset="100%" stopColor={ACCENT} stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false}
+                tickFormatter={v => v.toLocaleString(undefined, { style: 'currency', currency: history?.currency ?? 'USD', maximumFractionDigits: 0 })} />
+              <Tooltip
+                contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11 }}
+                labelFormatter={shortDate}
+                formatter={(v: number) => [v.toLocaleString(undefined, { style: 'currency', currency: history?.currency ?? 'USD' }), 'Total cost']}
+              />
+              <Area type="monotone" dataKey="totalCost" stroke={ACCENT} strokeWidth={2} fill="url(#spendHistoryFill)" dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </>
+      )}
+    </div>
+  );
+}
 
 function BreakdownCard({ title, rows, total, currency, color }: {
   title: string; rows: { name: string; cost: number }[]; total: number; currency: string; color: string;
@@ -187,6 +342,8 @@ function SpendView() {
               <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)' }}>spent</span>
             </div>
           </div>
+
+          <SpendHistoryChart subscriptionId={data.subscription.id} />
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <BreakdownCard title="By Service" rows={data.byService} total={data.totalCost} currency={data.currency} color={ACCENT} />
