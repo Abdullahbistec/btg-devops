@@ -24,7 +24,8 @@ export async function GET(req: Request) {
     const rows = getCostSnapshotHistory(resolvedSubId, days);
     return NextResponse.json({
       subscription: { id: sub.id, name: sub.name },
-      currency: rows[0]?.currency ?? 'USD',
+      timeframe: 'MonthToDate',
+      currency: rows[rows.length - 1]?.currency ?? 'USD',
       points: rows.map(r => ({
         date: r.snapshot_date,
         totalCost: r.total_cost,

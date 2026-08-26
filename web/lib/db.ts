@@ -143,6 +143,9 @@ function initSchema(db: DatabaseSync) {
     -- subscription per calendar day — a second same-day refresh updates
     -- that day's row rather than inserting a duplicate. See
     -- docs/superpowers/specs/2026-08-25-cost-snapshot-history-design.md.
+    -- IMPORTANT: total_cost here is Azure's MonthToDate cumulative spend as
+    -- of that snapshot_date, not a per-day delta — it rises through the
+    -- month and resets near zero at the start of each calendar month.
     CREATE TABLE IF NOT EXISTS cost_snapshot_history (
       subscription_id TEXT NOT NULL,
       snapshot_date    TEXT NOT NULL,
@@ -461,15 +464,19 @@ export function saveCostSnapshot(subscriptionId: string, data: { totalCost: numb
       fetched_at = excluded.fetched_at
   `).run(subscriptionId, data.totalCost, data.currency, JSON.stringify(data.byService), JSON.stringify(data.byResourceGroup));
 
-  db.prepare(`
-    INSERT INTO cost_snapshot_history (subscription_id, snapshot_date, total_cost, currency, by_service, fetched_at)
-    VALUES (?, date('now', 'localtime'), ?, ?, ?, datetime('now'))
-    ON CONFLICT(subscription_id, snapshot_date) DO UPDATE SET
-      total_cost = excluded.total_cost,
-      currency = excluded.currency,
-      by_service = excluded.by_service,
-      fetched_at = excluded.fetched_at
-  `).run(subscriptionId, data.totalCost, data.currency, JSON.stringify(data.byService));
+  try {
+    db.prepare(`
+      INSERT INTO cost_snapshot_history (subscription_id, snapshot_date, total_cost, currency, by_service, fetched_at)
+      VALUES (?, date('now', 'localtime'), ?, ?, ?, datetime('now'))
+      ON CONFLICT(subscription_id, snapshot_date) DO UPDATE SET
+        total_cost = excluded.total_cost,
+        currency = excluded.currency,
+        by_service = excluded.by_service,
+        fetched_at = excluded.fetched_at
+    `).run(subscriptionId, data.totalCost, data.currency, JSON.stringify(data.byService));
+  } catch (e) {
+    console.error('saveCostSnapshot: failed to write cost_snapshot_history (non-fatal):', e);
+  }
 }
 
 export interface CostSnapshotHistoryRow {
@@ -484,7 +491,7 @@ export interface CostSnapshotHistoryRow {
 export function getCostSnapshotHistory(subscriptionId: string, days: number): CostSnapshotHistoryRow[] {
   return getDB().prepare(`
     SELECT * FROM cost_snapshot_history
-    WHERE subscription_id = ? AND snapshot_date >= date('now', '-' || ? || ' days')
+    WHERE subscription_id = ? AND snapshot_date >= date('now', 'localtime', '-' || ? || ' days')
     ORDER BY snapshot_date ASC
   `).all(subscriptionId, days) as unknown as CostSnapshotHistoryRow[];
 }
