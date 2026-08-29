@@ -117,6 +117,7 @@ by this migration, existing rows on Yomal's database untouched):
 | `issue` | Yomal | `web/`'s Go write path maps its `description` value here |
 | `status`, `first_seen_at`, `resolved_at`, `resource_group`, `child_resource_name`, `affected_resources` (text[]), `cost_impact_usd`, `cost_impact_note`, `recommendation_steps` (text[]), `fix_effort`, `finding_type`, `evidence`, `scope` | Yomal | Available, not mandatory — `web/`'s findings can leave these null and keep working |
 | `location`, `monthly_cost`, `monthly_saving` | `web/` (Aug 19 work) | The Aug 19 sub-project only touched `web/`'s SQLite schema — confirmed absent from Yomal's real Postgres `findings` table via direct query. Must be added by this migration, not assumed present. |
+| `remediation_status`, `owner` | `web/` | Found by cross-checking `web/lib/db.ts`'s migration block against this table — actually read/written by `web/app/api/findings/route.ts`, `web/app/api/findings/[id]/route.ts`, `web/lib/btg-runner.ts`; not dead columns. Missing from the first draft of this migration. |
 
 ## Column mapping — `audits`
 
@@ -127,6 +128,7 @@ by this migration, existing rows on Yomal's database untouched):
 | `total_findings`, `critical_count`, `warning_count`, `info_count`, `resources_scanned`, `commands_run` | `web/` | Real columns, not derived from JSONB — kept so `web/`'s existing dashboard queries need no read-path rewrite when Sub-project 4 arrives |
 | `trigger_type` (manual/scheduled) | Yomal | Net-new capability for `web/`'s side; optional to populate |
 | `subscription_name` | Yomal | Denormalized convenience field |
+| `total_steps`, `completed_steps` | `web/` | Progress-bar fields for the live "Run Audit" view; used alongside Yomal's `current_step` text field, not a replacement for it — found by the same cross-check that caught `findings.remediation_status`/`owner` above |
 
 ## Column mapping — `users`
 
@@ -159,13 +161,15 @@ or a sensible default so old rows remain valid.
 
 ```sql
 -- findings: add web/'s columns Yomal doesn't have. Verified via direct
--- query against the live database that none of these four exist yet —
--- the Aug 19 location/cost-fields sub-project only touched web/'s SQLite
--- schema, not Yomal's Postgres.
-ALTER TABLE findings ADD COLUMN IF NOT EXISTS environment     TEXT DEFAULT '';
-ALTER TABLE findings ADD COLUMN IF NOT EXISTS location        TEXT DEFAULT '';
-ALTER TABLE findings ADD COLUMN IF NOT EXISTS monthly_cost    REAL DEFAULT NULL;
-ALTER TABLE findings ADD COLUMN IF NOT EXISTS monthly_saving  REAL DEFAULT NULL;
+-- query against the live database that none of these exist yet — the
+-- Aug 19 location/cost-fields sub-project, and remediation_status/owner,
+-- only ever touched web/'s SQLite schema, not Yomal's Postgres.
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS environment        TEXT DEFAULT '';
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS location           TEXT DEFAULT '';
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS monthly_cost       DOUBLE PRECISION DEFAULT NULL;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS monthly_saving     DOUBLE PRECISION DEFAULT NULL;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS remediation_status TEXT DEFAULT 'open';
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS owner              TEXT DEFAULT '';
 
 -- audits: add web/'s explicit count columns
 ALTER TABLE audits ADD COLUMN IF NOT EXISTS total_findings    INTEGER DEFAULT 0;
@@ -174,6 +178,8 @@ ALTER TABLE audits ADD COLUMN IF NOT EXISTS warning_count     INTEGER DEFAULT 0;
 ALTER TABLE audits ADD COLUMN IF NOT EXISTS info_count        INTEGER DEFAULT 0;
 ALTER TABLE audits ADD COLUMN IF NOT EXISTS resources_scanned INTEGER DEFAULT 0;
 ALTER TABLE audits ADD COLUMN IF NOT EXISTS commands_run      JSONB DEFAULT '[]';
+ALTER TABLE audits ADD COLUMN IF NOT EXISTS total_steps       INTEGER DEFAULT 0;
+ALTER TABLE audits ADD COLUMN IF NOT EXISTS completed_steps   INTEGER DEFAULT 0;
 
 -- subscriptions, analysis_requests, resources: already fully compatible,
 -- no schema change needed (subscriptions already has the `type` column
