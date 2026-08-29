@@ -88,7 +88,7 @@ nothing in this spec touches `web/lib/db.ts` or removes anything. Sub-project
 ## Full table list
 
 **Kept from Yomal, column-reconciled (see mappings below):** `subscriptions`,
-`audits`, `findings`, `analysis_requests`.
+`audits`, `findings`, `analysis_requests`, `users`.
 
 **Kept from Yomal as-is:** `resources` — a small resource-type catalog
 (slug → name/description) used as Claude-analysis context; real usage
@@ -96,11 +96,10 @@ confirmed in `external/yomal/dashboard/app/api/controllers/audit.ts`, kept
 since it supports the same optional raw-data/Claude-analysis capability
 `audits`'s JSONB columns carry forward.
 
-**Kept from `web/` as-is:** `users` (`web/`'s dashboard survives; its own
-approval-workflow auth schema — `status`/`approved_by` — is what's
-actually in use, not Yomal's differently-shaped, now-retiring one),
-`schedules`, `cost_snapshots`, `cost_fetch_requests`, `cost_snapshot_history`
-(Yomal has no cost-tracking family at all).
+**Net-new from `web/`, verified absent on Yomal's live database (see
+Testing):** `schedules`, `cost_snapshots`, `cost_fetch_requests`,
+`cost_snapshot_history` (Yomal has no cost-tracking or scheduling family
+at all).
 
 **Not part of the unified schema** (Yomal-dashboard-specific; not created
 by this migration, existing rows on Yomal's database untouched):
@@ -128,6 +127,25 @@ by this migration, existing rows on Yomal's database untouched):
 | `total_findings`, `critical_count`, `warning_count`, `info_count`, `resources_scanned`, `commands_run` | `web/` | Real columns, not derived from JSONB — kept so `web/`'s existing dashboard queries need no read-path rewrite when Sub-project 4 arrives |
 | `trigger_type` (manual/scheduled) | Yomal | Net-new capability for `web/`'s side; optional to populate |
 | `subscription_name` | Yomal | Denormalized convenience field |
+
+## Column mapping — `users`
+
+Verified via direct query against the live database
+(`information_schema.columns WHERE table_schema='public' AND
+table_name='users'`, properly schema-scoped — an earlier unscoped attempt
+falsely appeared to merge in Supabase's internal `auth.users` columns)
+that `public.users` already exists on Yomal's Postgres with 3 real rows
+(`admin@bistecglobal.com` and two others). This is **not** a net-new
+table — `web/`'s approval-workflow columns must be added to the existing
+table, or they'd silently never exist (a `CREATE TABLE IF NOT EXISTS`
+against a table that's already there is a no-op).
+
+| Unified column | Origin | Notes |
+|---|---|---|
+| `id`, `email`, `password_hash`, `role`, `is_active`, `created_at`, `last_login`, `created_by`, `password_reset_token`, `password_reset_expires` | Yomal (existing, real rows) | Untouched by this migration |
+| `name` | `web/` | Not present on Yomal's table; needed for `web/`'s user list UI |
+| `status` | `web/` | `web/`'s approval-workflow state (pending/approved/rejected); Yomal's `is_active` boolean is a different, coarser concept and is kept alongside it, not replaced |
+| `approved_at`, `approved_by` | `web/` | Approval-workflow audit fields; net-new columns, default `NULL` |
 
 ## Migration SQL
 
@@ -162,13 +180,24 @@ ALTER TABLE audits ADD COLUMN IF NOT EXISTS commands_run      JSONB DEFAULT '[]'
 -- from the Aug 17 Power Platform sub-project; analysis_requests already
 -- has `cache_hit`; a `summary` column is added for web/'s use):
 ALTER TABLE analysis_requests ADD COLUMN IF NOT EXISTS summary TEXT DEFAULT '';
+
+-- users: public.users already exists on the live database with 3 real
+-- rows (verified via direct, schema-scoped query) — add web/'s
+-- approval-workflow columns to the existing table, do NOT CREATE TABLE.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS name         TEXT DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS status       TEXT DEFAULT 'approved';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS approved_at  TIMESTAMPTZ DEFAULT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS approved_by  TEXT DEFAULT NULL;
 ```
 
-`users`, `schedules`, `cost_snapshots`, `cost_fetch_requests`,
-`cost_snapshot_history` are net-new `CREATE TABLE IF NOT EXISTS` additions
-to this database, copied verbatim from `web/lib/db.ts`'s existing SQLite
-DDL (Postgres-compatible as written — `TEXT`/`INTEGER`/`REAL` all map
-directly; `datetime('now')` becomes `now()`).
+`schedules`, `cost_snapshots`, `cost_fetch_requests`, `cost_snapshot_history`
+are net-new `CREATE TABLE IF NOT EXISTS` additions to this database,
+copied verbatim from `web/lib/db.ts`'s existing SQLite DDL
+(Postgres-compatible as written — `TEXT`/`INTEGER`/`REAL` all map
+directly; `datetime('now')` becomes `now()`). Verified via direct,
+schema-scoped query against the live database that none of these four
+exist yet — the same class of check that caught `users` and `findings`
+above, run here before assuming "net-new" is safe rather than after.
 
 ## Go connectivity
 
@@ -184,16 +213,20 @@ not usage.
 - Run the migration SQL against Yomal's real Supabase database (already
   have working credentials — `external/yomal/dashboard/.env.local`) inside
   a transaction, verify it applies cleanly, verify existing row counts in
-  `audits`/`findings`/`analysis_requests`/`subscriptions` are unchanged
-  before/after.
+  `audits`/`findings`/`analysis_requests`/`subscriptions`/`users` are
+  unchanged before/after (`users`' 3 real rows especially — this table
+  is not net-new, see the column mapping above).
 - Go: a test that opens the pool via `BTG_POSTGRES_DSN`, runs one real
   query (e.g. `SELECT count(*) FROM subscriptions`), confirms a non-error
   connection — proving connectivity works, not exercising any write path
   (there isn't one yet).
 - Manual verification: after the migration, directly query the new/altered
   columns (`SELECT environment, location, monthly_cost FROM findings LIMIT 1`,
-  `SELECT total_findings, commands_run FROM audits LIMIT 1`) to confirm they
-  exist with the right types and defaults.
+  `SELECT total_findings, commands_run FROM audits LIMIT 1`,
+  `SELECT name, status, approved_at, approved_by FROM users LIMIT 1`) to
+  confirm they exist with the right types and defaults, and that `users`'
+  3 existing rows still have their original `email`/`role`/`password_hash`
+  values.
 
 ## Risks
 
@@ -202,3 +235,4 @@ not usage.
 | Running this migration against Yomal's *live, real* Supabase database (not a staging copy) | Every statement is additive (`ADD COLUMN IF NOT EXISTS`); no `DROP`, no `ALTER ... TYPE`, no data modification. Row-count check before/after in testing catches any unintended side effect immediately. |
 | Sub-project 2 discovers it needs a column this schema doesn't have | Explicit guardrail in Non-goals: that comes back to this spec's table for a deliberate addition, not a silent `ALTER TABLE` buried in a later PR. |
 | `findings.environment` default `''` vs Yomal's existing rows having no concept of environment at all | Matches the existing pattern already used for every other Yomal→`web/` gap column in this migration — old rows simply read back an empty string, exactly as `web/`'s own SQLite schema already defaults it. |
+| `users` looked like a safe net-new table in an earlier draft of this spec but already exists on the live database with 3 real rows in a different shape | Caught before the migration was run, by direct schema-scoped query. Treated as an `ALTER TABLE` reconciliation instead of `CREATE TABLE IF NOT EXISTS`, same as `findings`/`audits`. The other four "net-new" tables (`schedules`, `cost_snapshots`, `cost_fetch_requests`, `cost_snapshot_history`) were independently re-verified absent before this spec was finalized, so this isn't expected to recur, but the migration's row-count check on `users` (Testing, above) is the backstop if it did. |
