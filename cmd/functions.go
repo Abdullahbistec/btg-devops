@@ -362,12 +362,7 @@ func computeFunctionsFindings(ctx context.Context, cred *azidentity.DefaultAzure
 			}
 		}
 
-		// 7. Client certificate mode
-		if props.ClientCertEnabled != nil && *props.ClientCertEnabled {
-			// Good — just note it
-		}
-
-		// 8. App state
+		// 7. App state
 		if props.State != nil && !strings.EqualFold(*props.State, "Running") {
 			findings = append(findings, FunctionsFinding{
 				Severity:       Info,
@@ -379,7 +374,7 @@ func computeFunctionsFindings(ctx context.Context, cred *azidentity.DefaultAzure
 			})
 		}
 
-		// 9. Remote debugging
+		// 8. Remote debugging
 		if siteConfig != nil && siteConfig.RemoteDebuggingEnabled != nil && *siteConfig.RemoteDebuggingEnabled {
 			findings = append(findings, FunctionsFinding{
 				Severity:       Critical,
@@ -391,7 +386,7 @@ func computeFunctionsFindings(ctx context.Context, cred *azidentity.DefaultAzure
 			})
 		}
 
-		// 10. FTP state
+		// 9. FTP state
 		if siteConfig != nil && siteConfig.FtpsState != nil {
 			ftps := string(*siteConfig.FtpsState)
 			if strings.EqualFold(ftps, "AllAllowed") {
@@ -459,6 +454,143 @@ func extractLastSegment(resourceID string) string {
 		return ""
 	}
 	return parts[len(parts)-1]
+}
+
+// FunctionAppInput consolidates all fields needed for testable analysis.
+type FunctionAppInput struct {
+	Name                   string
+	ResourceGroup          string
+	Kind                   string
+	State                  string
+	HTTPSOnly              bool
+	HasManagedIdentity     bool
+	ExtensionVersion       string
+	WorkerRuntime          string
+	Runtime                string
+	RuntimeVersion         string
+	AlwaysOn               bool
+	IsConsumptionPlan      bool
+	IsPremiumPlan          bool
+	HasVNETIntegration     bool
+	MinTLSVersion          string
+	RemoteDebuggingEnabled bool
+	FtpsState              string
+}
+
+// AnalyzeFunctionsData runs function app checks on pre-built input — no Azure calls.
+func AnalyzeFunctionsData(apps []FunctionAppInput) []FunctionsFinding {
+	var findings []FunctionsFinding
+	for _, app := range apps {
+		if app.ExtensionVersion != "" && app.ExtensionVersion != "~4" {
+			sev := Warning
+			if app.ExtensionVersion == "~1" || app.ExtensionVersion == "~2" {
+				sev = Critical
+			}
+			findings = append(findings, FunctionsFinding{
+				Severity: sev, Category: "Outdated Runtime Version",
+				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
+				Description:    fmt.Sprintf("Functions extension version is %s (recommended: ~4)", app.ExtensionVersion),
+				Recommendation: "Upgrade to Functions runtime v4 for latest features, security patches, and performance improvements.",
+			})
+		}
+
+		if app.RuntimeVersion != "" && app.Runtime != "" {
+			if current, ok := currentRuntimeVersions[app.Runtime]; ok {
+				if !strings.Contains(app.RuntimeVersion, strings.TrimPrefix(current, "~")) &&
+					!strings.Contains(app.RuntimeVersion, strings.TrimPrefix(current, "v")) &&
+					app.RuntimeVersion != current {
+					findings = append(findings, FunctionsFinding{
+						Severity: Info, Category: "Runtime Version",
+						FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
+						Description:    fmt.Sprintf("Runtime %s version %s (current recommended: %s)", app.Runtime, app.RuntimeVersion, current),
+						Recommendation: fmt.Sprintf("Consider upgrading %s runtime to %s for latest features and security patches.", app.Runtime, current),
+					})
+				}
+			}
+		}
+
+		if !app.HTTPSOnly {
+			findings = append(findings, FunctionsFinding{
+				Severity: Warning, Category: "HTTPS Not Enforced",
+				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
+				Description:    "HTTPS-only is not enabled — HTTP traffic is allowed",
+				Recommendation: "Enable HTTPS Only to ensure all traffic is encrypted in transit.",
+			})
+		}
+
+		if !app.HasManagedIdentity {
+			findings = append(findings, FunctionsFinding{
+				Severity: Warning, Category: "No Managed Identity",
+				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
+				Description:    "No managed identity configured — likely using connection strings or keys for auth",
+				Recommendation: "Enable system-assigned or user-assigned managed identity for secure, keyless authentication to Azure services.",
+			})
+		}
+
+		if !app.IsConsumptionPlan && !app.AlwaysOn {
+			findings = append(findings, FunctionsFinding{
+				Severity: Warning, Category: "Always-On Disabled",
+				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
+				Description:    "Always-On is disabled on dedicated/premium plan — may cause cold starts",
+				Recommendation: "Enable Always-On for dedicated/premium plans to avoid cold starts and idle timeouts.",
+			})
+		}
+
+		if app.IsConsumptionPlan {
+			findings = append(findings, FunctionsFinding{
+				Severity: Info, Category: "Consumption Plan",
+				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
+				Description:    "Running on Consumption plan — subject to cold starts and 5-minute timeout",
+				Recommendation: "Consider Premium plan (EP1+) if you need predictable latency, VNET integration, or longer execution times.",
+			})
+		}
+
+		if app.IsPremiumPlan && !app.HasVNETIntegration {
+			findings = append(findings, FunctionsFinding{
+				Severity: Info, Category: "Premium Without VNET",
+				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
+				Description:    "Running on Premium plan but no VNET integration configured",
+				Recommendation: "Premium plans support VNET integration — configure it if you need private access to backend services.",
+			})
+		}
+
+		if app.MinTLSVersion != "" && app.MinTLSVersion != "1.2" && app.MinTLSVersion != "1.3" {
+			findings = append(findings, FunctionsFinding{
+				Severity: Warning, Category: "Outdated TLS Version",
+				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
+				Description:    fmt.Sprintf("Minimum TLS version is %s", app.MinTLSVersion),
+				Recommendation: "Set minimum TLS version to 1.2 or higher for security compliance.",
+			})
+		}
+
+		if app.State != "" && !strings.EqualFold(app.State, "Running") {
+			findings = append(findings, FunctionsFinding{
+				Severity: Info, Category: "Not Running",
+				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
+				Description:    fmt.Sprintf("Function App state: %s", app.State),
+				Recommendation: "Review if this Function App is still needed. Delete if unused to reduce clutter.",
+			})
+		}
+
+		if app.RemoteDebuggingEnabled {
+			findings = append(findings, FunctionsFinding{
+				Severity: Critical, Category: "Remote Debugging Enabled",
+				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
+				Description:    "Remote debugging is enabled in production",
+				Recommendation: "Disable remote debugging — it opens additional ports and should only be used during active debugging sessions.",
+			})
+		}
+
+		if strings.EqualFold(app.FtpsState, "AllAllowed") {
+			findings = append(findings, FunctionsFinding{
+				Severity: Warning, Category: "FTP Allowed",
+				FunctionApp: app.Name, ResourceGrp: app.ResourceGroup,
+				Description:    "Plain FTP is allowed (not just FTPS)",
+				Recommendation: "Set FTP state to 'FtpsOnly' or 'Disabled' to prevent unencrypted file transfers.",
+			})
+		}
+	}
+	return findings
 }
 
 func printFunctionsTable(r FunctionsReport) {
