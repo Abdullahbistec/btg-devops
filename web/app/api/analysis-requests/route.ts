@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
     if (!auditId) {
       return NextResponse.json({ error: 'auditId is required' }, { status: 400 });
     }
-    const request = createAnalysisRequest(auditId, scope);
+    const request = await createAnalysisRequest(auditId, scope);
     return NextResponse.json({ id: request.id, status: request.status }, { status: 202 });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

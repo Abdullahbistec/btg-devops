@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'question is required for mode "chat"' }, { status: 400 });
     }
 
-    const context = buildAuditContext(auditId);
+    const context = await buildAuditContext(auditId);
     const prompt = mode === 'summary'
       ? `You are a cloud security analyst. Given these Azure and Power Platform audit findings, write a short executive risk summary (3-5 sentences) highlighting the most important issues and overall posture.\n\n${context}`
       : `You are a cloud security analyst. Given these Azure and Power Platform audit findings, answer the user's question concisely and specifically, referencing findings by name where relevant.\n\n${context}\n\nQuestion: ${question}`;

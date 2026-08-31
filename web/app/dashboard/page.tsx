@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import KPICard from '@/components/KPICard';
 import {
-  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, AreaChart, Area, Line, LabelList, XAxis, YAxis, Tooltip,
   BarChart, Bar, Cell, PieChart, Pie,
 } from 'recharts';
 
@@ -15,7 +15,8 @@ interface DashData {
   byService: { service: string; count: number }[];
   bySeverity: { severity: string; count: number }[];
   byCategory: { category: string; count: number }[];
-  trend: { id: string; name: string; started_at: string; total_findings: number; critical_count: number; warning_count: number; info_count: number }[];
+  trend: { id: string; name: string; started_at: string; total_findings: number; critical_count: number; warning_count: number; info_count: number; prev_total_findings: number | null }[];
+  trendChangePct: number | null;
   subscriptions: { id: string; name: string; is_active: number }[];
   recentAudits: { id: string; name: string; status: string; started_at: string; total_findings: number; critical_count: number; warning_count: number }[];
   resolvedAuditId: string;
@@ -93,11 +94,22 @@ function DashboardInner() {
   const sub       = data?.subscriptions?.[0];
   const lastAudit = data?.recentAudits?.[0];
 
-  const trendData = (data?.trend ?? []).map(t => ({
-    name: t.started_at ? t.started_at.slice(5, 10) : '—',
-    Findings: t.total_findings,
-    Critical: t.critical_count,
-  }));
+  const trendData = (data?.trend ?? []).map(t => {
+    const prev = t.prev_total_findings;
+    // bandLow/bandRange stack into one neutral-tinted fill between the
+    // Findings and PreviousFindings lines (see the AreaChart below) —
+    // rendered as a single stacked Area pair, not per-segment red/green.
+    const bandLow   = prev === null ? null : Math.min(t.total_findings, prev);
+    const bandRange = prev === null ? null : Math.abs(t.total_findings - prev);
+    return {
+      name: t.started_at ? t.started_at.slice(5, 10) : '—',
+      Findings: t.total_findings,
+      Critical: t.critical_count,
+      PreviousFindings: prev,
+      bandLow,
+      bandRange,
+    };
+  });
   const pieData = (data?.bySeverity ?? []).map(s => ({
     name: s.severity, value: s.count, fill: SEV_COLOR[s.severity] ?? '#888',
   }));
@@ -252,10 +264,10 @@ function DashboardInner() {
 
                 {/* CHART ROW 2 */}
                 <div style={{ display: 'grid', gridTemplateColumns: '2.5fr 1.5fr', gap: 8, minHeight: 200 }}>
-                  <Card title="Findings Trend Over Time" sub="Total findings per audit run" color="#7B5EA7">
+                  <Card title="Findings Trend Over Time" sub="Total findings per audit run" color="#7B5EA7" right={<TrendChangeBadge pct={data?.trendChangePct ?? null} />}>
                     {trendData.length > 0 ? (
-                      <ResponsiveContainer width="100%" height={130}>
-                        <AreaChart data={trendData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                      <ResponsiveContainer width="100%" height={150}>
+                        <AreaChart data={trendData} margin={{ top: 14, right: 8, left: -20, bottom: 0 }}>
                           <defs>
                             <linearGradient id="tgf" x1="0" y1="0" x2="0" y2="1">
                               <stop offset="0%" stopColor="#00C2FF" stopOpacity={0.3} />
@@ -269,14 +281,25 @@ function DashboardInner() {
                           <XAxis dataKey="name" tick={{ fill: '#2A3560', fontSize: 9 }} axisLine={false} tickLine={false} />
                           <YAxis tick={{ fill: '#2A3560', fontSize: 9 }} axisLine={false} tickLine={false} />
                           <Tooltip contentStyle={{ background: '#0E1333', border: '1px solid #1A2550', borderRadius: 4, fontSize: 11 }} />
-                          <Area type="monotone" dataKey="Findings" stroke="#00C2FF" strokeWidth={2} fill="url(#tgf)" dot={false} />
+                          {/* Neutral-tinted band between Findings and the previous-window
+                              line: bandLow (invisible) lifts the stack to the lower of the
+                              two values, bandRange (visible) stacks the gap on top of it —
+                              the standard Recharts trick for filling between two lines
+                              without per-segment color logic. */}
+                          <Area type="monotone" dataKey="bandLow" stackId="band" stroke="none" fill="transparent" isAnimationActive={false} />
+                          <Area type="monotone" dataKey="bandRange" stackId="band" stroke="none" fill="#A29BFE" fillOpacity={0.14} isAnimationActive={false} />
+                          <Line type="monotone" dataKey="PreviousFindings" stroke="#00C2FF" strokeWidth={1.5} strokeDasharray="4 3" dot={false} isAnimationActive={false} />
+                          <Area type="monotone" dataKey="Findings" stroke="#00C2FF" strokeWidth={2} fill="url(#tgf)" dot={false}>
+                            <LabelList dataKey="Findings" position="top" style={{ fontSize: 8, fill: '#7FDBFF' }} />
+                          </Area>
                           <Area type="monotone" dataKey="Critical" stroke="#FF4757" strokeWidth={1.5} fill="url(#tgc)" dot={false} />
                         </AreaChart>
                       </ResponsiveContainer>
                     ) : <EmptyState msg="Run an audit to see trends" />}
-                    <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+                    <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
                       <LegDot color="#00C2FF" label="Findings" />
                       <LegDot color="#FF4757" label="Critical" />
+                      <LegDot color="#A29BFE" label="Previous 10 (dashed)" />
                     </div>
                   </Card>
 
@@ -526,7 +549,7 @@ function AuditRow({ a }: { a: AuditRow }) {
   );
 }
 
-function Card({ title, sub, children, color = '#00C2FF' }: { title: string; sub?: string; children: React.ReactNode; color?: string }) {
+function Card({ title, sub, children, color = '#00C2FF', right }: { title: string; sub?: string; children: React.ReactNode; color?: string; right?: React.ReactNode }) {
   return (
     <div className="glass" style={{
       borderRadius: 8, padding: '10px 12px 10px 16px', display: 'flex', flexDirection: 'column', gap: 6, cursor: 'default',
@@ -538,11 +561,37 @@ function Card({ title, sub, children, color = '#00C2FF' }: { title: string; sub?
       <div style={{ position: 'absolute', top: 0, left: 0, bottom: 0, width: 3, background: `linear-gradient(180deg, ${color}, ${color}33)`, borderRadius: '8px 0 0 8px' }} />
       {/* Subtle top glow line */}
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: `linear-gradient(90deg, ${color}88, transparent)` }} />
-      <div>
-        <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{title}</div>
-        {sub && <div style={{ fontSize: 9.5, color: 'var(--muted)', marginTop: 1 }}>{sub}</div>}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{title}</div>
+          {sub && <div style={{ fontSize: 9.5, color: 'var(--muted)', marginTop: 1 }}>{sub}</div>}
+        </div>
+        {right}
       </div>
       {children}
+    </div>
+  );
+}
+
+/** Findings going up is bad, unlike the "more is better" metrics this pill
+ * style usually signals — so the color is intentionally the inverse of a
+ * typical growth badge: green for a decrease, red for an increase. Hidden
+ * entirely (not shown as "0%") when there's no previous window to compare
+ * against yet. */
+function TrendChangeBadge({ pct }: { pct: number | null }) {
+  if (pct === null) return null;
+  const improved = pct < 0;
+  const flat = pct === 0;
+  const color = flat ? 'var(--muted)' : improved ? '#2ED573' : '#FF4757';
+  const arrow = flat ? '—' : improved ? '▼' : '▲';
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700,
+      color, background: `${color}1A`, border: `1px solid ${color}55`,
+      borderRadius: 4, padding: '2px 6px', whiteSpace: 'nowrap',
+    }}>
+      <span>{arrow} {Math.abs(pct).toFixed(1)}%</span>
+      <span style={{ color: 'var(--muted)', fontWeight: 500 }}>vs previous 10</span>
     </div>
   );
 }

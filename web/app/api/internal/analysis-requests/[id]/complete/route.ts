@@ -9,7 +9,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!isInternalServiceRequest(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
-  const request = getAnalysisRequest(params.id);
+  const request = await getAnalysisRequest(params.id);
   if (!request) {
     return NextResponse.json({ error: 'analysis request not found' }, { status: 404 });
   }
@@ -19,9 +19,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const error: string = body?.error || '';
 
   if (error) {
-    failAnalysisRequest(params.id, error);
+    await failAnalysisRequest(params.id, error);
   } else if (summary) {
-    completeAnalysisRequest(params.id, summary);
+    await completeAnalysisRequest(params.id, summary);
   } else {
     return NextResponse.json({ error: 'summary or error is required' }, { status: 400 });
   }

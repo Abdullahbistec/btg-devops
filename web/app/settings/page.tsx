@@ -31,6 +31,7 @@ interface Subscription {
   tenant_id: string;
   client_id: string;
   is_active: number;
+  monthly_budget: number | null;
 }
 
 interface Schedule {
@@ -69,6 +70,8 @@ export default function SettingsPage() {
   const [showAddSub, setShowAddSub] = useState(false);
   const [newSub, setNewSub] = useState({ name: '', subscription_id: '', tenant_id: '', client_id: '', client_secret: '' });
   const [addingSubError, setAddingSubError] = useState('');
+  const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
+  const [budgetMsg, setBudgetMsg] = useState<{ id: string; ok: boolean; text: string } | null>(null);
   const [newSched, setNewSched] = useState({ name: 'Nightly Audit', frequency: 'daily', hour: '2' });
   const [addingSchedMsg, setAddingSchedMsg] = useState('');
 
@@ -130,6 +133,27 @@ export default function SettingsPage() {
       const d = await res.json();
       setAddingSubError(d.error || 'Failed to add subscription');
     }
+  }
+
+  async function saveBudget(id: string) {
+    const raw = budgetDrafts[id];
+    const monthly_budget = raw === undefined || raw.trim() === '' ? null : Number(raw);
+    if (monthly_budget !== null && (!Number.isFinite(monthly_budget) || monthly_budget < 0)) {
+      setBudgetMsg({ id, ok: false, text: 'Enter a non-negative number, or leave blank to clear' });
+      setTimeout(() => setBudgetMsg(null), 3000);
+      return;
+    }
+    const res = await fetch('/api/subscriptions', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, monthly_budget }),
+    });
+    setBudgetMsg({ id, ok: res.ok, text: res.ok ? 'Budget saved' : 'Save failed' });
+    if (res.ok) {
+      setSubs(list => list.map(s => s.id === id ? { ...s, monthly_budget } : s));
+      setBudgetDrafts(d => { const next = { ...d }; delete next[id]; return next; });
+    }
+    setTimeout(() => setBudgetMsg(null), 3000);
   }
 
   async function addSchedule() {
@@ -254,16 +278,38 @@ export default function SettingsPage() {
 
           {/* Subscriptions */}
           <Section title="Subscriptions" subtitle="Azure subscriptions to scan">
-            {subs.map(s => (
-              <div key={s.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
-                <StatusDot ok={!!s.is_active} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{s.name}</div>
-                  <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.subscription_id}</div>
+            {subs.map(s => {
+              const draft = budgetDrafts[s.id];
+              const value = draft !== undefined ? draft : (s.monthly_budget ?? '');
+              const dirty = draft !== undefined && draft !== String(s.monthly_budget ?? '');
+              return (
+                <div key={s.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
+                  <StatusDot ok={!!s.is_active} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{s.name}</div>
+                    <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.subscription_id}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+                    <span style={{ fontSize: 9, color: 'var(--muted)' }}>Monthly budget</span>
+                    <input
+                      type="number" min="0" placeholder="none"
+                      value={value}
+                      onChange={e => setBudgetDrafts(d => ({ ...d, [s.id]: e.target.value }))}
+                      style={{ width: 90, fontSize: 11, padding: '3px 7px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text)' }}
+                    />
+                    {dirty && (
+                      <button onClick={() => saveBudget(s.id)} style={{ padding: '3px 9px', fontSize: 10, fontWeight: 700, background: ACCENT, border: 'none', borderRadius: 3, color: '#000', cursor: 'pointer' }}>
+                        Save
+                      </button>
+                    )}
+                    {budgetMsg?.id === s.id && (
+                      <span style={{ fontSize: 10, fontWeight: 600, color: budgetMsg.ok ? OK : ERR }}>{budgetMsg.text}</span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 10, color: s.is_active ? OK : 'var(--muted)', fontWeight: 700 }}>{s.is_active ? 'Active' : 'Inactive'}</span>
                 </div>
-                <span style={{ fontSize: 10, color: s.is_active ? OK : 'var(--muted)', fontWeight: 700 }}>{s.is_active ? 'Active' : 'Inactive'}</span>
-              </div>
-            ))}
+              );
+            })}
             {subs.length === 0 && <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>No subscriptions found.</div>}
 
             {showAddSub ? (

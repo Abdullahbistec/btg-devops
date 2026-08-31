@@ -7,11 +7,12 @@ const PP_LIST      = [...PP_SERVICE_LABELS].map(s => `'${s.replace(/'/g, "''")}'
 const HETZNER_LIST = [...HETZNER_SERVICE_LABELS].map(s => `'${s.replace(/'/g, "''")}'`).join(',');
 
 /** Most recent completed audit whose commands_run overlaps the given scope. */
-function resolveLatestAuditForScope(scope: string): string | undefined {
-  const db = getDB();
-  const recent = db.prepare(
+async function resolveLatestAuditForScope(scope: string): Promise<string | undefined> {
+  const db = await getDB();
+  const { rows } = await db.query(
     `SELECT id, commands_run FROM audits WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 25`
-  ).all() as { id: string; commands_run: string }[];
+  );
+  const recent = rows as { id: string; commands_run: string }[];
 
   const wanted = scope === 'pp' ? PP_COMMANDS : scope === 'azure' ? AZURE_COMMANDS : scope === 'hetzner' ? HETZNER_COMMANDS : null;
   if (!wanted) return recent[0]?.id;
@@ -29,15 +30,16 @@ export async function GET(req: NextRequest) {
     const severity = req.nextUrl.searchParams.get('severity') ?? '';
     const scope    = req.nextUrl.searchParams.get('scope') ?? '';
     const remediationStatus = req.nextUrl.searchParams.get('remediation_status') ?? '';
-    const db = getDB();
+    const db = await getDB();
 
     // Default to the latest relevant audit — never show findings pooled across every audit ever run.
-    const auditId = req.nextUrl.searchParams.get('audit_id') || resolveLatestAuditForScope(scope) || '';
+    const auditId = req.nextUrl.searchParams.get('audit_id') || await resolveLatestAuditForScope(scope) || '';
 
     const clauses: string[] = [];
-    if (auditId)  clauses.push(`audit_id = '${auditId.replace(/'/g, "''")}'`);
-    if (severity) clauses.push(`severity = '${severity.replace(/'/g, "''")}'`);
-    if (remediationStatus) clauses.push(`remediation_status = '${remediationStatus.replace(/'/g, "''")}'`);
+    const params: string[] = [];
+    if (auditId) { params.push(auditId); clauses.push(`audit_id = $${params.length}`); }
+    if (severity) { params.push(severity); clauses.push(`severity = $${params.length}`); }
+    if (remediationStatus) { params.push(remediationStatus); clauses.push(`remediation_status = $${params.length}`); }
     if (scope === 'pp')      clauses.push(`service IN (${PP_LIST})`);
     if (scope === 'hetzner') clauses.push(`service IN (${HETZNER_LIST})`);
     if (scope === 'azure')   clauses.push(`service NOT IN (${PP_LIST}) AND service NOT IN (${HETZNER_LIST})`);
@@ -48,11 +50,12 @@ export async function GET(req: NextRequest) {
     const limit = auditId ? 5000 : 200;
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-    const rows = db.prepare(
-      `SELECT * FROM findings ${where} ORDER BY severity, service LIMIT ${limit}`
-    ).all() as unknown as Finding[];
+    const { rows } = await db.query(
+      `SELECT * FROM findings ${where} ORDER BY severity, service LIMIT ${limit}`,
+      params
+    );
 
-    return NextResponse.json(rows);
+    return NextResponse.json(rows as unknown as Finding[]);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

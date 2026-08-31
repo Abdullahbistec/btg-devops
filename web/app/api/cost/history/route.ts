@@ -12,16 +12,16 @@ export async function GET(req: Request) {
     const subParam = url.searchParams.get('subscription_id');
     const daysParam = url.searchParams.get('days');
     const days = daysParam ? Math.max(1, parseInt(daysParam, 10) || 90) : 90;
-    const db = getDB();
+    const db = await getDB();
 
-    const resolvedSubId = subParam ||
-      (db.prepare("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1").get() as { id: string } | undefined)?.id || '';
-    const sub = getSubscription(resolvedSubId);
+    const activeRes = await db.query("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1");
+    const resolvedSubId = subParam || (activeRes.rows[0] as { id: string } | undefined)?.id || '';
+    const sub = await getSubscription(resolvedSubId);
     if (!sub) {
       return NextResponse.json({ error: 'No active subscription found. Add one in Settings.' }, { status: 404 });
     }
 
-    const rows = getCostSnapshotHistory(resolvedSubId, days);
+    const rows = await getCostSnapshotHistory(resolvedSubId, days);
     return NextResponse.json({
       subscription: { id: sub.id, name: sub.name },
       timeframe: 'MonthToDate',

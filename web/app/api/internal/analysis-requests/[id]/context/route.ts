@@ -10,10 +10,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if (!isInternalServiceRequest(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
-  const request = getAnalysisRequest(params.id);
+  const request = await getAnalysisRequest(params.id);
   if (!request) {
     return NextResponse.json({ error: 'analysis request not found' }, { status: 404 });
   }
-  const context = buildAuditContext(request.audit_id, request.scope);
+  const context = await buildAuditContext(request.audit_id, request.scope);
   return NextResponse.json({ audit_id: request.audit_id, scope: request.scope, context });
 }

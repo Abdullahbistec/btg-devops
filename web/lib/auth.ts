@@ -22,17 +22,17 @@ export function makeSessionToken(secret: string, email: string): string {
   return createHmac('sha256', secret).update(email).digest('hex');
 }
 
-export function getRequestRole(req: NextRequest): 'admin' | 'viewer' {
+export async function getRequestRole(req: NextRequest): Promise<'admin' | 'viewer'> {
   const identity = (req.cookies.get('btg_identity')?.value ?? '').toLowerCase();
   const adminEmail = (process.env.ADMIN_EMAIL ?? '').toLowerCase();
   if (!identity || (adminEmail && identity === adminEmail)) return 'admin';
-  const user = getUserByEmail(identity);
+  const user = await getUserByEmail(identity);
   if (!user || user.status !== 'active') return 'viewer';
   return user.role === 'admin' ? 'admin' : 'viewer';
 }
 
-export function isAdminRequest(req: NextRequest): boolean {
-  return getRequestRole(req) === 'admin';
+export async function isAdminRequest(req: NextRequest): Promise<boolean> {
+  return (await getRequestRole(req)) === 'admin';
 }
 
 /**

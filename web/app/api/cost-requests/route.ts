@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  getDB, getSubscription, createCostFetchRequest, getPendingCostFetchRequestFor,
+  getDB, getSubscription, createCostFetchRequest, createCostBackfillRequest, getPendingCostFetchRequestFor,
   completeCostFetchRequest, failCostFetchRequest,
 } from '@/lib/db';
-import { refreshCostSnapshot } from '@/lib/costManagement';
+import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
+
+function backfillNote(saved: number, skipped: number, errors: string[]): string | undefined {
+  if (errors.length === 0) return undefined;
+  return `Backfilled ${saved} month(s), ${skipped} already had data, ${errors.length} failed: ${errors.join('; ')}`;
+}
 
 /** Creates a cost-refresh request and processes it immediately, in-process —
  * no MCP server or scheduled Claude Code routine required. That routine
@@ -19,26 +24,40 @@ import { refreshCostSnapshot } from '@/lib/costManagement';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const db = getDB();
-    const subscriptionId: string = body?.subscriptionId ||
-      (db.prepare("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1").get() as { id: string } | undefined)?.id || '';
+    const db = await getDB();
+    const activeRes = await db.query("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1");
+    const subscriptionId: string = body?.subscriptionId || (activeRes.rows[0] as { id: string } | undefined)?.id || '';
 
-    const sub = getSubscription(subscriptionId);
+    const sub = await getSubscription(subscriptionId);
     if (!sub) {
       return NextResponse.json({ error: 'No active subscription found.' }, { status: 404 });
     }
 
+    // A positive integer here switches this from a live MonthToDate refresh
+    // to a one-time historical backfill of the last N calendar months —
+    // see backfillCostHistory(). Anything else falls back to the normal
+    // refresh so existing callers (the Refresh button, the scheduled-audit
+    // cron script) are unaffected.
+    const backfillMonths = Math.max(0, Math.floor(Number(body?.backfillMonths) || 0));
+
     // Don't queue a second request while one's already in flight for this
     // subscription — the routine polls on its own schedule regardless.
-    const existing = getPendingCostFetchRequestFor(subscriptionId);
-    const request = existing ?? createCostFetchRequest(subscriptionId);
+    const existing = await getPendingCostFetchRequestFor(subscriptionId);
+    const request = existing ?? (backfillMonths > 0
+      ? await createCostBackfillRequest(subscriptionId, backfillMonths)
+      : await createCostFetchRequest(subscriptionId));
 
     if (!existing) {
       try {
-        await refreshCostSnapshot(subscriptionId);
-        completeCostFetchRequest(request.id);
+        if (backfillMonths > 0) {
+          const { saved, skipped, errors } = await backfillCostHistory(subscriptionId, backfillMonths);
+          await completeCostFetchRequest(request.id, backfillNote(saved, skipped, errors));
+        } else {
+          await refreshCostSnapshot(subscriptionId);
+          await completeCostFetchRequest(request.id);
+        }
       } catch (e) {
-        failCostFetchRequest(request.id, (e as Error).message);
+        await failCostFetchRequest(request.id, (e as Error).message);
       }
     }
 

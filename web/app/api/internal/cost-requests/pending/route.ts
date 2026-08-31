@@ -9,6 +9,6 @@ export async function GET(req: NextRequest) {
   if (!isInternalServiceRequest(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
-  const pending = listPendingCostFetchRequests();
+  const pending = await listPendingCostFetchRequests();
   return NextResponse.json(pending.map(r => ({ id: r.id, subscription_id: r.subscription_id, requested_at: r.requested_at })));
 }

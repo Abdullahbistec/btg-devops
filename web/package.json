@@ -12,6 +12,7 @@
     "@types/nodemailer": "^8.0.1",
     "next": "14.2.5",
     "nodemailer": "^9.0.3",
+    "pg": "^8.23.0",
     "react": "^18",
     "react-dom": "^18",
     "recharts": "^2.12.7",
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@types/node": "^22",
+    "@types/pg": "^8.23.1",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@types/uuid": "^9.0.8",

@@ -15,21 +15,25 @@ interface AuditSummary {
 // as /api/dashboard.
 export async function GET() {
   try {
-    const db = getDB();
-    const subs = listSubscriptionsBasic();
+    const db = await getDB();
+    const subs = await listSubscriptionsBasic();
 
-    const results = subs.map(sub => {
-      const audit = db.prepare(
+    const results = await Promise.all(subs.map(async sub => {
+      const auditRes = await db.query(
         `SELECT id, name, completed_at, total_findings, critical_count, warning_count, info_count
-         FROM audits WHERE subscription_id = ? AND status = 'completed'
-         ORDER BY completed_at DESC LIMIT 1`
-      ).get(sub.id) as AuditSummary | undefined;
+         FROM audits WHERE subscription_id = $1 AND status = 'completed'
+         ORDER BY completed_at DESC LIMIT 1`,
+        [sub.id]
+      );
+      const audit = auditRes.rows[0] as AuditSummary | undefined;
 
       let byService: { service: string; count: number }[] = [];
       if (audit) {
-        byService = db.prepare(
-          `SELECT service, COUNT(*) as count FROM findings WHERE audit_id = ? GROUP BY service ORDER BY count DESC LIMIT 8`
-        ).all(audit.id) as { service: string; count: number }[];
+        const byServiceRes = await db.query(
+          `SELECT service, COUNT(*)::int as count FROM findings WHERE audit_id = $1 GROUP BY service ORDER BY count DESC LIMIT 8`,
+          [audit.id]
+        );
+        byService = byServiceRes.rows as { service: string; count: number }[];
       }
 
       return {
@@ -37,7 +41,7 @@ export async function GET() {
         latestAudit: audit ?? null,
         byService,
       };
-    });
+    }));
 
     return NextResponse.json(results);
   } catch (e) {

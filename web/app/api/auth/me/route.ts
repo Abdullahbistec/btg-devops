@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ email: adminEmail, name: adminName, role: 'admin' });
   }
 
-  const user = getUserByEmail(identity);
+  const user = await getUserByEmail(identity);
   if (!user || user.status !== 'active') {
     return NextResponse.json({ email: identity, name: identity.split('@')[0], role: 'viewer' });
   }

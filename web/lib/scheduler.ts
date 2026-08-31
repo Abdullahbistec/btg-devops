@@ -25,13 +25,14 @@ function computeNextRun(frequency: string, hour: number): string {
 }
 
 async function runDueSchedules() {
-  const db = getDB();
+  const db = await getDB();
   let due: ScheduleRow[];
   try {
-    due = db.prepare(
+    const { rows } = await db.query(
       `SELECT id, name, frequency, hour, enabled, subscription_id FROM schedules
-       WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= datetime('now')`
-    ).all() as ScheduleRow[];
+       WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`
+    );
+    due = rows;
   } catch (e) {
     console.error('[scheduler] failed to query due schedules:', e);
     return;
@@ -45,7 +46,7 @@ async function runDueSchedules() {
       console.error(`[scheduler] schedule '${sched.name}' failed to start:`, e);
     }
     const nextRun = computeNextRun(sched.frequency, sched.hour);
-    db.prepare(`UPDATE schedules SET last_run_at = datetime('now'), next_run_at = ? WHERE id = ?`).run(nextRun, sched.id);
+    await db.query(`UPDATE schedules SET last_run_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS'), next_run_at = $1 WHERE id = $2`, [nextRun, sched.id]);
   }
 }
 

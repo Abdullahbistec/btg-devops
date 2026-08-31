@@ -21,16 +21,17 @@ export async function executeAudit(
   commands?: Command[],
   name?: string
 ): Promise<{ auditId: string }> {
-  const db = getDB();
-  const resolvedSubId: string = subscriptionId ||
-    (db.prepare("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1").get() as { id: string } | undefined)?.id || '';
+  const db = await getDB();
+  const activeRes = await db.query("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1");
+  const resolvedSubId: string = subscriptionId || (activeRes.rows[0] as { id: string } | undefined)?.id || '';
 
-  const sub = getSubscription(resolvedSubId);
+  const sub = await getSubscription(resolvedSubId);
   if (!sub) {
     throw new AuditExecutorError('No active subscription found. Add one in Settings.');
   }
 
-  const row = db.prepare('SELECT client_secret FROM subscriptions WHERE id = ?').get(resolvedSubId) as { client_secret: string } | null;
+  const secretRes = await db.query('SELECT client_secret FROM subscriptions WHERE id = $1', [resolvedSubId]);
+  const row = secretRes.rows[0] as { client_secret: string } | undefined;
   const credentials = {
     tenantId: sub.tenant_id || process.env.AZURE_TENANT_ID || '',
     clientId: sub.client_id || process.env.AZURE_CLIENT_ID || '',
@@ -49,21 +50,21 @@ export async function executeAudit(
   }
 
   const auditName = name || `Audit ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`;
-  const audit = createAudit(resolvedSubId, auditName, cmdsToRun);
+  const audit = await createAudit(resolvedSubId, auditName, cmdsToRun);
 
   const ppCredentials = getPPCredentials(credentials);
   const hcloudToken = process.env.HCLOUD_TOKEN || '';
 
   runAllCommands(cmdsToRun, credentials, ppCredentials, hcloudToken, (cmd, _count) => {
     const done = cmdsToRun.indexOf(cmd) + 1;
-    updateAuditStep(audit.id, cmd, done);
+    updateAuditStep(audit.id, cmd, done).catch(e => console.warn('[audit-executor] updateAuditStep failed:', e));
   })
     .then(async ({ findings, ran, resourcesScanned }) => {
-      if (findings.length > 0) insertFindings(audit.id, findings);
+      if (findings.length > 0) await insertFindings(audit.id, findings);
       const crit = findings.filter(f => f.severity === 'Critical').length;
       const warn = findings.filter(f => f.severity === 'Warning').length;
       const info = findings.filter(f => f.severity === 'Info').length;
-      updateAuditCounts(audit.id, crit, warn, info, ran, resourcesScanned);
+      await updateAuditCounts(audit.id, crit, warn, info, ran, resourcesScanned);
 
       const recipients = getNotificationRecipients();
       if (recipients) {
@@ -75,7 +76,7 @@ export async function executeAudit(
       }
     })
     .catch(async e => {
-      failAudit(audit.id, String(e));
+      await failAudit(audit.id, String(e));
       const recipients = getNotificationRecipients();
       if (recipients) {
         try {

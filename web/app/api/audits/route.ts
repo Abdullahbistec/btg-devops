@@ -4,7 +4,7 @@ import { listAudits } from '@/lib/db';
 export async function GET(req: NextRequest) {
   try {
     const subId = req.nextUrl.searchParams.get('subscription_id') ?? undefined;
-    const audits = listAudits(subId);
+    const audits = await listAudits(subId);
     return NextResponse.json(audits);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

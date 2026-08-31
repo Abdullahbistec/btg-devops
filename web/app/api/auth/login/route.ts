@@ -37,7 +37,7 @@ export async function POST(req: Request) {
   }
 
   // 2. Check DB users
-  const dbUser = getUserByEmail(normalEmail);
+  const dbUser = await getUserByEmail(normalEmail);
   if (!dbUser) {
     return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
   }

@@ -2,19 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUserByEmail, listUsers } from '@/lib/db';
 import nodemailer from 'nodemailer';
 
-function isAdmin(req: NextRequest): boolean {
+async function isAdmin(req: NextRequest): Promise<boolean> {
   const identity = req.cookies.get('btg_identity')?.value ?? '';
   if (!identity) return false;
   const adminEmail = (process.env.ADMIN_EMAIL ?? '').toLowerCase();
   if (identity === adminEmail) return true;
   try {
-    const user = getUserByEmail(identity);
+    const user = await getUserByEmail(identity);
     return user?.role === 'admin' && user?.status === 'active';
   } catch { return false; }
 }
 
 export async function POST(req: NextRequest) {
-  if (!isAdmin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!(await isAdmin(req))) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const body = await req.json().catch(() => ({}));
   const { subject, message, recipients } = body as {
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     emails = recipients;
   } else {
     const status = recipients === 'active' ? 'active' : undefined;
-    emails = listUsers(status).map(u => u.email);
+    emails = (await listUsers(status)).map(u => u.email);
   }
 
   if (emails.length === 0) {

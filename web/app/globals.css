@@ -13,7 +13,7 @@ select option {
 }
 
 :root {
-  --bg:       #050818;
+  --bg:       #0B1930;
   --sb:       rgba(5, 9, 26, 0.45);
   --card:     rgba(255, 255, 255, 0);
   --card2:    rgba(255, 255, 255, 0.06);
@@ -36,7 +36,7 @@ html {
     radial-gradient(ellipse 900px 700px at 8%   5%,  rgba(0, 194, 255, 0.22) 0%, transparent 60%),
     radial-gradient(ellipse 700px 800px at 92%  92%, rgba(123, 94, 167, 0.28) 0%, transparent 60%),
     radial-gradient(ellipse 600px 500px at 55%  45%, rgba(0,  184, 148, 0.10) 0%, transparent 60%),
-    #050818;
+    #0B1930;
 }
 
 body {

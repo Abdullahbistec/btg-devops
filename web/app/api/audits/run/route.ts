@@ -6,7 +6,7 @@ import type { NextRequest } from 'next/server';
 
 export async function POST(req: NextRequest) {
   try {
-    if (!isAdminRequest(req)) {
+    if (!(await isAdminRequest(req))) {
       return NextResponse.json({ error: 'Viewers cannot trigger scans. Contact an admin.' }, { status: 403 });
     }
     const body = await req.json();

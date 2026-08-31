@@ -24,13 +24,13 @@ export async function POST(req: Request) {
   }
 
   // Check duplicate
-  const existing = getUserByEmail(normalEmail);
+  const existing = await getUserByEmail(normalEmail);
   if (existing) {
     return NextResponse.json({ error: 'This email is already registered' }, { status: 409 });
   }
 
   const id = uuidv4();
-  createUser(id, normalEmail, name.trim(), hashPassword(password));
+  await createUser(id, normalEmail, name.trim(), hashPassword(password));
 
   // Notify admin
   if (adminEmail) {

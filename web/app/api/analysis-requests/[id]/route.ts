@@ -3,7 +3,7 @@ import { getAnalysisRequest } from '@/lib/db';
 
 /** Polled by the dashboard while an analysis request is pending. */
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const request = getAnalysisRequest(params.id);
+  const request = await getAnalysisRequest(params.id);
   if (!request) {
     return NextResponse.json({ error: 'analysis request not found' }, { status: 404 });
   }

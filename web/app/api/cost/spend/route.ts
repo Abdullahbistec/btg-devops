@@ -11,21 +11,22 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const subParam = url.searchParams.get('subscription_id');
-    const db = getDB();
+    const db = await getDB();
 
-    const resolvedSubId = subParam ||
-      (db.prepare("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1").get() as { id: string } | undefined)?.id || '';
-    const sub = getSubscription(resolvedSubId);
+    const activeRes = await db.query("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1");
+    const resolvedSubId = subParam || (activeRes.rows[0] as { id: string } | undefined)?.id || '';
+    const sub = await getSubscription(resolvedSubId);
     if (!sub) {
       return NextResponse.json({ error: 'No active subscription found. Add one in Settings.' }, { status: 404 });
     }
 
-    const snapshot = getCostSnapshot(resolvedSubId);
+    const snapshot = await getCostSnapshot(resolvedSubId);
     if (!snapshot) {
       return NextResponse.json({
         subscription: { id: sub.id, name: sub.name },
         noData: true,
         message: 'No cost data fetched yet for this subscription. Click Refresh to request one.',
+        monthlyBudget: sub.monthly_budget,
       });
     }
 
@@ -37,6 +38,7 @@ export async function GET(req: Request) {
       byService: JSON.parse(snapshot.by_service),
       byResourceGroup: JSON.parse(snapshot.by_resource_group),
       fetchedAt: snapshot.fetched_at,
+      monthlyBudget: sub.monthly_budget,
     });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

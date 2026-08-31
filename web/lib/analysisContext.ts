@@ -8,9 +8,9 @@ const TOP_FINDINGS_LIMIT = 20;
  * tool — one place instead of two so the two paths can't drift on what
  * "context" means.
  */
-export function buildAuditContext(auditId?: string, scope: string = 'all'): string {
-  const stats = getDashboardStats(auditId);
-  let findings = listFindings(auditId);
+export async function buildAuditContext(auditId?: string, scope: string = 'all'): Promise<string> {
+  const stats = await getDashboardStats(auditId);
+  let findings = await listFindings(auditId);
   if (scope !== 'all') {
     findings = findings.filter(f => f.service === scope);
   }
