@@ -18,11 +18,30 @@ export async function getDB(): Promise<Pool> {
     if (!connectionString) {
       throw new Error('DATABASE_URL is not set — see web/.env.local');
     }
-    _pool = new Pool({ connectionString });
-    _ready = initSchema(_pool);
+    const pool = new Pool({ connectionString });
+    // pg emits 'error' on *idle* clients — a Postgres restart or a dropped
+    // connection, not anything a caller awaited. With no listener that is an
+    // unhandled EventEmitter error, which takes the whole Next.js process
+    // down; the pool itself discards the bad client and keeps working, so
+    // logging is the correct response rather than rethrowing.
+    pool.on('error', (err) => {
+      console.error('[db] idle client error:', err);
+    });
+    _pool = pool;
+    // Cache the readiness promise, but drop it *and* the pool if applying
+    // schema fails — otherwise one transient failure (the app booting before
+    // Postgres accepts connections) poisons every later getDB() call for the
+    // lifetime of the process. Resetting lets the next caller retry.
+    _ready = initSchema(pool).catch((err) => {
+      _pool = null;
+      _ready = null;
+      void pool.end().catch(() => {});
+      throw err;
+    });
   }
+  const pool = _pool;
   await _ready;
-  return _pool;
+  return pool;
 }
 
 async function initSchema(pool: Pool): Promise<void> {
@@ -176,6 +195,32 @@ async function initSchema(pool: Pool): Promise<void> {
       PRIMARY KEY (subscription_id, snapshot_date)
     );
     CREATE INDEX IF NOT EXISTS idx_cost_snapshot_history_sub ON cost_snapshot_history(subscription_id, snapshot_date);
+  `);
+
+  // Idempotent column migrations. Every CREATE TABLE above is IF NOT EXISTS,
+  // so it is a no-op against a database that already has the table — which
+  // means a column added to the DDL after that database was first created
+  // never actually appears, and queries fail with "column does not exist".
+  // The SQLite original carried this same list as try/catch'd ALTERs;
+  // Postgres supports IF NOT EXISTS natively, so nothing is swallowed here.
+  // Any column added to an existing table from now on belongs in BOTH the
+  // DDL above (for fresh databases) and this list (for existing ones).
+  await pool.query(`
+    ALTER TABLE findings ADD COLUMN IF NOT EXISTS remediation_status TEXT DEFAULT 'open';
+    ALTER TABLE findings ADD COLUMN IF NOT EXISTS owner              TEXT DEFAULT '';
+    ALTER TABLE findings ADD COLUMN IF NOT EXISTS location           TEXT DEFAULT '';
+    ALTER TABLE findings ADD COLUMN IF NOT EXISTS monthly_cost       DOUBLE PRECISION DEFAULT NULL;
+    ALTER TABLE findings ADD COLUMN IF NOT EXISTS monthly_saving     DOUBLE PRECISION DEFAULT NULL;
+
+    ALTER TABLE audits ADD COLUMN IF NOT EXISTS resources_scanned INTEGER DEFAULT 0;
+    ALTER TABLE audits ADD COLUMN IF NOT EXISTS current_step      TEXT DEFAULT '';
+    ALTER TABLE audits ADD COLUMN IF NOT EXISTS total_steps       INTEGER DEFAULT 0;
+    ALTER TABLE audits ADD COLUMN IF NOT EXISTS completed_steps   INTEGER DEFAULT 0;
+
+    ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS monthly_budget DOUBLE PRECISION DEFAULT NULL;
+
+    ALTER TABLE cost_fetch_requests ADD COLUMN IF NOT EXISTS type   TEXT DEFAULT 'refresh';
+    ALTER TABLE cost_fetch_requests ADD COLUMN IF NOT EXISTS months INTEGER DEFAULT NULL;
   `);
 
   // Seed default subscription from env vars if the table is empty — same
