@@ -302,7 +302,7 @@ func computeCognitiveServicesFindings(ctx context.Context, cred *azidentity.Defa
 					Category:       "No Deployments",
 					AccountName:    name,
 					ResourceGroup:  rg,
-					Description:    fmt.Sprintf("OpenAI/AI Services account has no model deployments — may be unused"),
+					Description:    "OpenAI/AI Services account has no model deployments — may be unused",
 					Recommendation: "Delete unused accounts to avoid unnecessary costs and reduce attack surface.",
 				})
 			}
@@ -343,6 +343,114 @@ func computeCognitiveServicesFindings(ctx context.Context, cred *azidentity.Defa
 		Findings: findings,
 	}
 	return report, nil
+}
+
+// AnalyzeCogServicesFindings runs cognitive services checks — no Azure calls.
+// Skips deployment checks (require Azure client).
+func AnalyzeCogServicesFindings(accounts []*armcognitiveservices.Account) []CognitiveServicesFinding {
+	var findings []CognitiveServicesFinding
+	for _, acct := range accounts {
+		name := deref(acct.Name)
+		rg := extractResourceGroup(deref(acct.ID))
+		props := acct.Properties
+		kind := ""
+		if acct.Kind != nil {
+			kind = *acct.Kind
+		}
+		if props == nil {
+			continue
+		}
+
+		if props.PublicNetworkAccess != nil && *props.PublicNetworkAccess == armcognitiveservices.PublicNetworkAccessEnabled {
+			findings = append(findings, CognitiveServicesFinding{
+				Severity: Warning, Category: "Public Network Access",
+				AccountName: name, ResourceGroup: rg,
+				Description:    fmt.Sprintf("Public network access is enabled on %s account", kind),
+				Recommendation: "Disable public network access and use private endpoints for secure connectivity.",
+			})
+		}
+
+		if len(props.PrivateEndpointConnections) == 0 {
+			findings = append(findings, CognitiveServicesFinding{
+				Severity: Warning, Category: "No Private Endpoint",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "No private endpoint connections configured",
+				Recommendation: "Configure private endpoints to restrict access to your virtual network.",
+			})
+		}
+
+		if acct.Identity == nil || acct.Identity.Type == nil {
+			findings = append(findings, CognitiveServicesFinding{
+				Severity: Warning, Category: "No Managed Identity",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "No managed identity configured — using key-based auth only",
+				Recommendation: "Enable system-assigned or user-assigned managed identity for secure, keyless authentication.",
+			})
+		}
+
+		if props.Encryption == nil || props.Encryption.KeySource == nil ||
+			*props.Encryption.KeySource == armcognitiveservices.KeySourceMicrosoftCognitiveServices {
+			findings = append(findings, CognitiveServicesFinding{
+				Severity: Info, Category: "No Customer-Managed Key",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "Using platform-managed encryption key (not customer-managed)",
+				Recommendation: "Consider using customer-managed keys in Azure Key Vault for enhanced control over data encryption.",
+			})
+		}
+
+		if props.NetworkACLs == nil {
+			findings = append(findings, CognitiveServicesFinding{
+				Severity: Warning, Category: "No Network Rules",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "No network ACL rules configured — default access from all networks",
+				Recommendation: "Configure network rules to restrict access to specific IP ranges or virtual networks.",
+			})
+		} else if props.NetworkACLs.DefaultAction != nil && *props.NetworkACLs.DefaultAction == armcognitiveservices.NetworkRuleActionAllow {
+			findings = append(findings, CognitiveServicesFinding{
+				Severity: Warning, Category: "Permissive Network Default",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "Network default action is Allow — all networks can access this account",
+				Recommendation: "Set the default network action to Deny and add specific allow rules for trusted networks.",
+			})
+		}
+
+		if props.RestrictOutboundNetworkAccess != nil && !*props.RestrictOutboundNetworkAccess {
+			findings = append(findings, CognitiveServicesFinding{
+				Severity: Info, Category: "Outbound Access Not Restricted",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "Outbound network access is not restricted",
+				Recommendation: "Restrict outbound network access to prevent data exfiltration.",
+			})
+		}
+
+		if props.DisableLocalAuth == nil || !*props.DisableLocalAuth {
+			findings = append(findings, CognitiveServicesFinding{
+				Severity: Info, Category: "Local Auth Enabled",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "Key-based (local) authentication is enabled",
+				Recommendation: "Disable local authentication and use Azure AD for all access to reduce key exposure risk.",
+			})
+		}
+
+		if props.ProvisioningState != nil && *props.ProvisioningState != armcognitiveservices.ProvisioningStateSucceeded {
+			findings = append(findings, CognitiveServicesFinding{
+				Severity: Critical, Category: "Provisioning Issue",
+				AccountName: name, ResourceGroup: rg,
+				Description:    fmt.Sprintf("Account provisioning state is '%s' (not Succeeded)", *props.ProvisioningState),
+				Recommendation: "Investigate the provisioning issue; the account may not be functional.",
+			})
+		}
+
+		if acct.SKU != nil && acct.SKU.Name != nil && strings.EqualFold(*acct.SKU.Name, "F0") {
+			findings = append(findings, CognitiveServicesFinding{
+				Severity: Info, Category: "Free Tier",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "Account is on Free (F0) tier — limited throughput and features",
+				Recommendation: "Upgrade to a paid tier (S0+) for production workloads to ensure SLA coverage and higher limits.",
+			})
+		}
+	}
+	return findings
 }
 
 // ---------- provider registration ----------

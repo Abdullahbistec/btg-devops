@@ -17,14 +17,14 @@ import (
 // ---------- data types ----------
 
 type PublicIPFinding struct {
-	Severity      Severity `json:"severity"`
-	Category      string   `json:"category"`
-	PIPName       string   `json:"pip_name"`
-	ResourceGroup string   `json:"resource_group"`
-	IPAddress     string   `json:"ip_address,omitempty"`
-	SKU           string   `json:"sku"`
-	Description   string   `json:"description"`
-	Recommendation string  `json:"recommendation"`
+	Severity       Severity `json:"severity"`
+	Category       string   `json:"category"`
+	PIPName        string   `json:"pip_name"`
+	ResourceGroup  string   `json:"resource_group"`
+	IPAddress      string   `json:"ip_address,omitempty"`
+	SKU            string   `json:"sku"`
+	Description    string   `json:"description"`
+	Recommendation string   `json:"recommendation"`
 }
 
 type PublicIPSummary struct {
@@ -160,6 +160,11 @@ func (publicIPProviderAdapter) Run(ctx context.Context) ([]provider.Finding, err
 // Approximate monthly cost for an unattached Standard SKU static PIP
 const standardPIPMonthlyCostUSD = 3.65
 
+// AnalyzePublicIPs is the exported, testable form of analyzePublicIPs.
+func AnalyzePublicIPs(pips []*armnetwork.PublicIPAddress) PublicIPReport {
+	return analyzePublicIPs(pips)
+}
+
 func analyzePublicIPs(pips []*armnetwork.PublicIPAddress) PublicIPReport {
 	report := PublicIPReport{
 		Summary: PublicIPSummary{
@@ -271,13 +276,6 @@ func analyzePublicIPs(pips []*armnetwork.PublicIPAddress) PublicIPReport {
 			})
 		}
 
-		// Check 6: IPv4 vs IPv6 check — flag IPv4 with no IPv6 counterpart as info
-		if pip.Properties != nil && pip.Properties.PublicIPAddressVersion != nil {
-			version := string(*pip.Properties.PublicIPAddressVersion)
-			if strings.EqualFold(version, "IPv4") {
-				// Just track, not a finding unless needed
-			}
-		}
 	}
 
 	return report

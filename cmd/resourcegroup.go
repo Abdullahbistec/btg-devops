@@ -296,6 +296,76 @@ func (r *RGReport) addRGFinding(f RGFinding) {
 	r.Summary.FindingsBySeverity[string(f.Severity)]++
 }
 
+// RGInput holds pre-fetched resource group data for testable analysis.
+type RGInput struct {
+	Name     string
+	Location string
+	Tags     map[string]*string
+	IsEmpty  bool
+	HasLock  bool
+}
+
+// AnalyzeRGFindings runs resource group checks on pre-fetched data — no Azure calls.
+func AnalyzeRGFindings(rgs []RGInput) []RGFinding {
+	var findings []RGFinding
+	for _, rg := range rgs {
+		if rg.IsEmpty {
+			findings = append(findings, RGFinding{
+				Severity: Warning, Category: "Empty Resource Group",
+				ResourceGroup: rg.Name, Location: rg.Location,
+				Description:    fmt.Sprintf("Resource group '%s' contains no resources", rg.Name),
+				Recommendation: "Delete empty resource groups to reduce clutter and improve governance",
+			})
+		}
+
+		missingTags := []string{}
+		for _, tag := range requiredTags {
+			found := false
+			for k := range rg.Tags {
+				if strings.EqualFold(k, tag) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				missingTags = append(missingTags, tag)
+			}
+		}
+		if len(missingTags) > 0 {
+			sev := Warning
+			if len(rg.Tags) == 0 {
+				sev = Critical
+			}
+			findings = append(findings, RGFinding{
+				Severity: sev, Category: "Tag Compliance",
+				ResourceGroup: rg.Name, Location: rg.Location,
+				Description:    fmt.Sprintf("Resource group '%s' missing tags: %s", rg.Name, strings.Join(missingTags, ", ")),
+				Recommendation: "Add required tags (environment, owner, project) for cost tracking and governance",
+			})
+		}
+
+		nameLower := strings.ToLower(rg.Name)
+		if !rgNamingRegex.MatchString(nameLower) {
+			findings = append(findings, RGFinding{
+				Severity: Info, Category: "Naming Convention",
+				ResourceGroup: rg.Name, Location: rg.Location,
+				Description:    fmt.Sprintf("Resource group '%s' doesn't follow naming convention (lowercase alphanumeric with hyphens)", rg.Name),
+				Recommendation: "Use consistent naming like 'rg-<project>-<env>-<region>' for better organization",
+			})
+		}
+
+		if !rg.IsEmpty && !rg.HasLock {
+			findings = append(findings, RGFinding{
+				Severity: Info, Category: "Missing Lock",
+				ResourceGroup: rg.Name, Location: rg.Location,
+				Description:    fmt.Sprintf("Resource group '%s' has no management lock", rg.Name),
+				Recommendation: "Add a CanNotDelete or ReadOnly lock to protect critical resource groups from accidental deletion",
+			})
+		}
+	}
+	return findings
+}
+
 func printRGReport(report RGReport) {
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
