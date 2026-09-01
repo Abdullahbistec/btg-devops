@@ -71,3 +71,54 @@ describe('initSchema column migrations', () => {
     await probe.end();
   });
 });
+
+describe('insertFindings transaction cleanup', () => {
+  /** A client stub whose INSERT fails and whose ROLLBACK then also fails —
+   * the realistic pairing, since the usual reason a rollback fails is that
+   * the connection died, which is what broke the INSERT in the first place. */
+  function stubClient(rollbackFails: boolean) {
+    return {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        if (sql === 'BEGIN') return {};
+        if (sql.startsWith('INSERT')) throw new Error('original insert failure');
+        if (sql === 'ROLLBACK') {
+          if (rollbackFails) throw new Error('connection terminated unexpectedly');
+          return {};
+        }
+        return {};
+      }),
+    };
+  }
+
+  const oneFinding = [{
+    service: 'storage', resource: 'r', environment: '', severity: 'critical',
+    category: '', description: '', recommendation: '', remediation_status: 'open',
+    owner: '', location: '', monthly_cost: null, monthly_saving: null,
+  }] as any;
+
+  it('propagates the original error when ROLLBACK also fails', async () => {
+    const { getDB, insertFindings } = await coldDb();
+    const pool = await getDB();
+    const client = stubClient(true);
+    vi.spyOn(pool, 'connect').mockResolvedValue(client as any);
+
+    // Not 'connection terminated unexpectedly' — an unguarded await on a
+    // failing ROLLBACK would replace the real cause with the rollback error.
+    await expect(insertFindings('audit-1', oneFinding)).rejects.toThrow('original insert failure');
+
+    // Rollback failed, so the client's transaction state is unknown and it
+    // must be destroyed rather than returned to the pool.
+    expect(client.release).toHaveBeenCalledWith(true);
+  });
+
+  it('returns the client to the pool when ROLLBACK succeeds', async () => {
+    const { getDB, insertFindings } = await coldDb();
+    const pool = await getDB();
+    const client = stubClient(false);
+    vi.spyOn(pool, 'connect').mockResolvedValue(client as any);
+
+    await expect(insertFindings('audit-1', oneFinding)).rejects.toThrow('original insert failure');
+    expect(client.release).toHaveBeenCalledWith(false);
+  });
+});

@@ -410,6 +410,7 @@ export interface Finding {
 export async function insertFindings(auditId: string, findings: Omit<Finding, 'id' | 'audit_id' | 'created_at'>[]): Promise<void> {
   const db = await getDB();
   const client = await db.connect();
+  let destroyClient = false;
   try {
     await client.query('BEGIN');
     for (const f of findings) {
@@ -421,10 +422,20 @@ export async function insertFindings(auditId: string, findings: Omit<Finding, 'i
     }
     await client.query('COMMIT');
   } catch (e) {
-    await client.query('ROLLBACK');
+    // A failing ROLLBACK must not replace the error that caused it — the
+    // usual reason rollback fails is that the connection itself died, which
+    // is exactly the diagnostic the caller needs. A client whose rollback
+    // failed is also in an unknown transaction state, so it is destroyed
+    // rather than handed back to the pool for someone else to inherit.
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      destroyClient = true;
+      console.error('[db] ROLLBACK failed in insertFindings:', rollbackError);
+    }
     throw e;
   } finally {
-    client.release();
+    client.release(destroyClient);
   }
 }
 
