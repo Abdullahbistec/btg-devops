@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDB } from '@/lib/db';
 import { v4 as uuidv4 } from 'uuid';
 import { isAdminRequest } from '@/lib/auth';
+import { computeNextRun } from '@/lib/schedule-time';
 
 interface Schedule {
   id: string;
@@ -13,18 +14,6 @@ interface Schedule {
   next_run_at: string | null;
   subscription_id: string | null;
   created_at: string;
-}
-
-function computeNextRun(frequency: string, hour: number): string {
-  const now = new Date();
-  const next = new Date(now);
-  next.setHours(hour, 0, 0, 0);
-  if (next <= now) {
-    if (frequency === 'daily') next.setDate(next.getDate() + 1);
-    else if (frequency === 'weekly') next.setDate(next.getDate() + 7);
-    else next.setMonth(next.getMonth() + 1);
-  }
-  return next.toISOString().slice(0, 19).replace('T', ' ');
 }
 
 export async function GET() {

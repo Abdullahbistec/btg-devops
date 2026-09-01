@@ -358,7 +358,11 @@ export async function updateAuditStep(id: string, currentStep: string, completed
   await db.query(`UPDATE audits SET current_step = $1, completed_steps = $2 WHERE id = $3`, [currentStep, completedSteps, id]);
 }
 
-export async function updateAuditCounts(id: string, critical: number, warning: number, info: number, commands: string[], resourcesScanned = 0): Promise<void> {
+/** `note` records a partial failure on an otherwise successful audit — some
+ * commands ran, others errored. Stored in the same error_message column as a
+ * hard failure; status ('completed' vs 'failed') is what distinguishes them,
+ * mirroring completeCostFetchRequest(). */
+export async function updateAuditCounts(id: string, critical: number, warning: number, info: number, commands: string[], resourcesScanned = 0, note?: string): Promise<void> {
   const db = await getDB();
   await db.query(
     `UPDATE audits SET
@@ -369,9 +373,10 @@ export async function updateAuditCounts(id: string, critical: number, warning: n
        commands_run = $5,
        resources_scanned = $6,
        status = 'completed',
+       error_message = $7,
        completed_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
-     WHERE id = $7`,
-    [critical + warning + info, critical, warning, info, JSON.stringify(commands), resourcesScanned, id]
+     WHERE id = $8`,
+    [critical + warning + info, critical, warning, info, JSON.stringify(commands), resourcesScanned, note ?? '', id]
   );
 
   const audit = await getAudit(id);
