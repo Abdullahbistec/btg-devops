@@ -4,6 +4,7 @@ import {
   completeCostFetchRequest, failCostFetchRequest,
 } from '@/lib/db';
 import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
+import { isAdminRequest } from '@/lib/auth';
 
 function backfillNote(saved: number, skipped: number, errors: string[]): string | undefined {
   if (errors.length === 0) return undefined;
@@ -23,6 +24,17 @@ function backfillNote(saved: number, skipped: number, errors: string[]): string 
  * pending for any reason (e.g. a crash mid-request). */
 export async function POST(req: NextRequest) {
   try {
+    // This route spends money-adjacent quota: it makes live Azure Cost
+    // Management calls, and a backfill makes one per month requested. Every
+    // other mutating route (/api/subscriptions, /api/audits/run,
+    // /api/schedule) is admin-only; this one was not, so any signed-in
+    // viewer could trigger a 6-month backfill against Azure's tight rate
+    // limit. The scheduled cron caller (scripts/run-scheduled-cost-refresh.js)
+    // already logs in as ADMIN_EMAIL and is unaffected.
+    if (!(await isAdminRequest(req))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const body = await req.json().catch(() => ({}));
     const db = await getDB();
     const activeRes = await db.query("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1");
@@ -42,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     // Don't queue a second request while one's already in flight for this
     // subscription — the routine polls on its own schedule regardless.
-    const existing = await getPendingCostFetchRequestFor(subscriptionId);
+    const existing = await getPendingCostFetchRequestFor(subscriptionId, backfillMonths > 0 ? 'backfill' : 'refresh');
     const request = existing ?? (backfillMonths > 0
       ? await createCostBackfillRequest(subscriptionId, backfillMonths)
       : await createCostFetchRequest(subscriptionId));

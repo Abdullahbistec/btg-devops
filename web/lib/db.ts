@@ -686,14 +686,21 @@ export async function getCostFetchRequest(id: string): Promise<CostFetchRequest 
  * synchronously), it's abandoned, not in flight, and must not permanently
  * block every future refresh for that subscription. Two minutes is well
  * beyond refreshCostSnapshot's own retry/backoff ceiling. */
-export async function getPendingCostFetchRequestFor(subscriptionId: string): Promise<CostFetchRequest | null> {
+/** In-flight request of the SAME type for this subscription, if any. The
+ * type filter matters: a 'refresh' and a 'backfill' do completely different
+ * work, so a pending refresh must not make a backfill look already-queued —
+ * the caller would return 202 and the backfill would silently never run. */
+export async function getPendingCostFetchRequestFor(
+  subscriptionId: string,
+  type: 'refresh' | 'backfill' = 'refresh'
+): Promise<CostFetchRequest | null> {
   const db = await getDB();
   const { rows } = await db.query(
     `SELECT * FROM cost_fetch_requests
-     WHERE subscription_id = $1 AND status = 'pending'
+     WHERE subscription_id = $1 AND status = 'pending' AND type = $2
        AND requested_at::timestamp > (now() - interval '2 minutes')
      ORDER BY requested_at DESC LIMIT 1`,
-    [subscriptionId]
+    [subscriptionId, type]
   );
   return rows[0] ?? null;
 }

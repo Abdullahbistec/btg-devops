@@ -29,5 +29,14 @@ export default defineConfig({
     env: {
       DATABASE_URL: testDatabaseUrl(),
     },
+    // Every db-touching test file shares one physical Postgres database, and
+    // they set up by DELETEing the tables they use (db.pool.test.ts goes
+    // further and drops a column, then mutates DATABASE_URL). Run in
+    // parallel, those files corrupt each other's fixtures and the suite fails
+    // in a different place on every run. Postgres has no per-worker
+    // in-memory-database equivalent to the old SQLite setup, so the fix is to
+    // serialise the files. The whole suite runs in ~2s; determinism is worth
+    // far more than the parallelism here.
+    fileParallelism: false,
   },
 });

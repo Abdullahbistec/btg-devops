@@ -27,28 +27,41 @@ export function encryptSecret(plaintext: string): string {
   return `${iv.toString('hex')}:${authTag.toString('hex')}:${ciphertext.toString('hex')}`;
 }
 
-/** Decrypts a value encrypted by encryptSecret(). Values that don't match
- * the iv:authTag:ciphertext shape (e.g. a pre-existing plaintext secret
- * seeded from an env var before this scheme existed) pass through
- * unchanged rather than throwing — callers always get a usable secret. */
+/** Exactly what encryptSecret() produces: a 12-byte IV and a 16-byte GCM
+ * auth tag, hex-encoded — so 24 and 32 hex characters, not merely "some
+ * hex". A plaintext secret that happens to contain two colons will not
+ * match both fixed lengths, which is what makes the pass-through in
+ * decryptSecret() safe to keep. */
+const ENCRYPTED_SHAPE = /^[0-9a-f]{24}:[0-9a-f]{32}:[0-9a-f]*$/i;
+
+/** Decrypts a value encrypted by encryptSecret(). A value that isn't in that
+ * format (e.g. a pre-existing plaintext secret seeded from an env var before
+ * this scheme existed) passes through unchanged.
+ *
+ * A value that IS in that format but fails to decrypt throws. It previously
+ * returned `stored` — the raw ciphertext — which callers then handed to
+ * Azure as a live client secret: every request failed with an opaque
+ * authentication error and nothing anywhere pointed at the real cause, a
+ * rotated or mismatched ENCRYPTION_KEY. Silently substituting undecryptable
+ * bytes for a credential is never the recoverable outcome it looks like. */
 export function decryptSecret(stored: string): string {
   if (!stored) return stored;
-  const parts = stored.split(':');
-  if (parts.length !== 3 || !/^[0-9a-f]+$/i.test(parts[0])) return stored;
+  if (!ENCRYPTED_SHAPE.test(stored)) return stored;
 
+  const [ivHex, authTagHex, ciphertextHex] = stored.split(':');
   try {
     const key = getKey();
-    const [ivHex, authTagHex, ciphertextHex] = parts;
-    const iv = Buffer.from(ivHex, 'hex');
-    const authTag = Buffer.from(authTagHex, 'hex');
-    const ciphertext = Buffer.from(ciphertextHex, 'hex');
-    const decipher = createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(authTag);
-    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
-  } catch {
-    // Malformed/undecryptable — most likely a plaintext secret that
-    // happens to contain two colons. Return as-is rather than breaking
-    // credential resolution.
-    return stored;
+    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
+    return Buffer.concat([
+      decipher.update(Buffer.from(ciphertextHex, 'hex')),
+      decipher.final(),
+    ]).toString('utf8');
+  } catch (e) {
+    throw new Error(
+      'Failed to decrypt a stored secret — it is in encryptSecret() format but will not ' +
+      'decrypt, which usually means ENCRYPTION_KEY no longer matches the key it was ' +
+      `encrypted with. Underlying error: ${(e as Error).message}`
+    );
   }
 }
