@@ -58,3 +58,29 @@ describe('parseMonthlyCostRows', () => {
     );
   });
 });
+
+describe('parseMonthlyCostRows — month bucketing is timezone-independent', () => {
+  const columns = [{ name: 'Cost' }, { name: 'BillingMonth' }, { name: 'ServiceName' }, { name: 'Currency' }];
+
+  it('buckets an ISO instant by its UTC month, not the host timezone month', () => {
+    // Late-in-the-month UTC instant. Read through a host timezone ahead of
+    // UTC (this machine is +05:30) the local date rolls into August, so the
+    // old local-getter code filed July spend under 2026-08 — writing 0 for
+    // one month and clobbering the neighbouring row.
+    const result = parseMonthlyCostRows(columns, [[99.5, '2026-07-31T20:00:00Z', 'Virtual Machines', 'USD']]);
+
+    expect([...result.keys()]).toEqual(['2026-07']);
+    expect(result.get('2026-07')?.totalCost).toBe(99.5);
+  });
+
+  it('buckets an early-in-the-month ISO instant by its UTC month', () => {
+    // The mirror case, which is what breaks on a host behind UTC.
+    const result = parseMonthlyCostRows(columns, [[10, '2026-07-01T00:00:00Z', 'Storage', 'USD']]);
+    expect([...result.keys()]).toEqual(['2026-07']);
+  });
+
+  it('still reads the plain YYYYMMDD integer form without going near Date', () => {
+    const result = parseMonthlyCostRows(columns, [[5, 20260701, 'Storage', 'USD']]);
+    expect([...result.keys()]).toEqual(['2026-07']);
+  });
+});

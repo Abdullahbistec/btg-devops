@@ -257,7 +257,10 @@ export async function runAllCommands(
   credentials: Credentials,
   ppCredentials?: Credentials,
   hcloudToken?: string,
-  onProgress?: (cmd: string, count: number) => void
+  // Typed as Command, not string: runAllCommands only ever invokes this with
+  // an element of `commands`. Declaring it as string forced every caller that
+  // wanted to index back into that array to fail typechecking.
+  onProgress?: (cmd: Command, count: number) => void
 ): Promise<{ findings: NormalizedFinding[]; ran: Command[]; errors: string[]; ppErrors: string[]; hetznerErrors: string[]; resourcesScanned: number }> {
   const allFindings: NormalizedFinding[] = [];
   const ran: Command[] = [];

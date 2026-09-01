@@ -126,6 +126,12 @@ func runUsage(_ *cobra.Command, _ []string) error {
 	if !flagUsageAll && flagUsageType == "" && flagResourceName == "" {
 		return fmt.Errorf("one of --resource <name>, --type <type>, or --all is required\n\nSupported types: cosmosdb, storage, appserviceplan, keyvault, acr, appservice, functions, publicip, cognitiveservices")
 	}
+	// Metric aggregation divides by this to get a daily average, so zero
+	// yields +Inf (which --output json then fails to marshal) and a negative
+	// value silently flips every rate's sign.
+	if flagUsageDays < 1 {
+		return fmt.Errorf("--days must be at least 1, got %d", flagUsageDays)
+	}
 
 	ctx := context.Background()
 	subID := getSubscriptionID()

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -153,8 +154,13 @@ func runMCP(cmd *cobra.Command, args []string) error {
 // dashboard's internal API) is a separate secret, MCP_INTERNAL_TOKEN.
 func requireBearerToken(next http.Handler, expected string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Constant-time comparison, matching isInternalServiceRequest() in
+		// web/lib/auth.ts, which already uses timingSafeEqual for the sibling
+		// secret. A plain != leaks the shared token's length and its matching
+		// prefix through response timing.
 		auth := r.Header.Get("Authorization")
-		if auth != "Bearer "+expected {
+		want := "Bearer " + expected
+		if subtle.ConstantTimeCompare([]byte(auth), []byte(want)) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

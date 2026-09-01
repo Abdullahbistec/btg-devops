@@ -101,13 +101,25 @@ export async function GET(req: NextRequest) {
     // recent 10 runs against the 10 runs before those, paired up 1st-to-1st,
     // 2nd-to-2nd, etc. — trendRaw is newest-first, so reverse to chronological
     // before slicing the two windows out.
+    const WINDOW = 10;
     const chronological = [...trendRaw].reverse();
-    const current  = chronological.slice(-10);
-    const previous = chronological.slice(-20, -10);
+    const current  = chronological.slice(-WINDOW);
+    const previous = chronological.slice(-2 * WINDOW, -WINDOW);
+
+    // The previous window is short at its OLDEST end whenever fewer than
+    // 2*WINDOW audits exist, so previous[i] is not the run one full window
+    // before current[i] — pairing them directly compared runs an arbitrary
+    // distance apart, and left the NEWEST runs with no comparison at all
+    // while the oldest got a wrong one. Padding the front restores the
+    // invariant that a pair is always exactly WINDOW runs apart.
+    const previousAligned: (typeof previous[number] | null)[] = [
+      ...Array(Math.max(0, WINDOW - previous.length)).fill(null),
+      ...previous,
+    ];
 
     const trend = current.map((row, i) => ({
       ...row,
-      prev_total_findings: previous[i]?.total_findings ?? null,
+      prev_total_findings: previousAligned[i]?.total_findings ?? null,
     }));
 
     const avgFindings = (rows: { total_findings: number }[]) =>

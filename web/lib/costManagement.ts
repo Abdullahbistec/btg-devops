@@ -198,7 +198,13 @@ function usageDateToYearMonth(raw: string | number): string | null {
   const s = String(raw);
   if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}`;
   const d = new Date(s);
-  return isNaN(d.getTime()) ? null : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  // UTC getters, not local ones. Azure's ISO values are UTC instants, so
+  // reading them through the host's timezone shifts a bucket into the
+  // neighbouring month at the boundary — writing 0 for one month and
+  // overwriting the previous month's row with it.
+  return isNaN(d.getTime())
+    ? null
+    : `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
 /** Unlike fetchLiveCostSpend (always 'MonthToDate', granularity 'None'),
