@@ -84,7 +84,7 @@ function shortDate(iso: string) {
 }
 
 function monthLabel(iso: string) {
-  return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'long' });
 }
 
 function addDaysIso(iso: string, n: number): string {
@@ -147,7 +147,17 @@ function deltaForWindow(points: HistoryPoint[], winStart: string, winEnd: string
     let baseService: Record<string, number> = {};
     if (!isMonthStart) {
       const before = findLastBefore(points, cursor);
-      if (before) { baseTotal = before.totalCost; baseService = toServiceMap(before.byService); }
+      // A baseline is only valid within the same calendar month as `cursor`
+      // — MTD resets to 0 on the 1st, so a prior month's end-of-month total
+      // (e.g. a backfilled row) is not "the value right before this point,"
+      // it's a different month's cumulative total entirely. Using it as a
+      // baseline here previously made endTotal - baseTotal deeply negative
+      // whenever real data for the current month started partway through
+      // (e.g. a mid-month subscription start), clamping the whole window's
+      // total to 0 via Math.max(0, ...) below.
+      if (before && before.date.slice(0, 7) === cursor.slice(0, 7)) {
+        baseTotal = before.totalCost; baseService = toServiceMap(before.byService);
+      }
     }
 
     const end = findLastAtOrBefore(points, segEndIso, cursor);
@@ -367,19 +377,22 @@ const BACKFILL_MONTHS = 6;
 const BACKFILL_POLL_MS = 3000;
 const BACKFILL_TIMEOUT_MS = 10 * 60 * 1000; // 6 months, each now retrying up to 5x through Azure throttling — give it real room before assuming it's stuck
 
+// Comfortably covers several past years of billing history for the year
+// filter below — reads only cached rows (no Azure rate-limit cost), so
+// there's no reason to size this tightly to the current backfill window.
+const HISTORY_DAYS = 1500;
+
 function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId: string; monthlyBudget: number | null }) {
   const [history, setHistory] = useState<HistoryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [backfilling, setBackfilling] = useState(false);
   const [backfillNote, setBackfillNote] = useState('');
   const [backfillError, setBackfillError] = useState('');
+  const [selectedYear, setSelectedYear] = useState(() => String(new Date().getFullYear()));
 
   const reload = useCallback(() => {
     setLoading(true);
-    // 200 days covers ~6+ calendar months regardless of what span is picked
-    // in the chart above — this table isn't tied to that selector. Reads
-    // only cached SQLite rows, so there's no rate-limit cost to asking for more.
-    fetch(`/api/cost/history?subscription_id=${subscriptionId}&days=200`)
+    fetch(`/api/cost/history?subscription_id=${subscriptionId}&days=${HISTORY_DAYS}`)
       .then(r => r.json())
       .then(d => { if (!d.error) setHistory(d); setLoading(false); })
       .catch(() => setLoading(false));
@@ -453,7 +466,23 @@ function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId
         overBudget: monthlyBudget != null ? total - monthlyBudget : null,
       };
     });
+    // "vs previous" above is computed against the full, unfiltered month
+    // list (so January's comparison reaches back into December of the prior
+    // year) — the year filter below only narrows what's *displayed*.
   }, [history, monthlyBudget]);
+
+  // Every year that has at least one month of data, plus the current year
+  // even before any data exists for it, so the selector is never empty.
+  const years = useMemo(() => {
+    const set = new Set(months.map(m => m.key.slice(0, 4)));
+    set.add(String(new Date().getFullYear()));
+    return [...set].sort().reverse();
+  }, [months]);
+
+  const visibleMonths = useMemo(
+    () => months.filter(m => m.key.startsWith(selectedYear)),
+    [months, selectedYear]
+  );
 
   if (loading) return null;
   const currency = history?.currency ?? 'USD';
@@ -472,6 +501,12 @@ function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId
         <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
           Billing History
         </div>
+        <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} style={{
+          fontSize: 11, fontWeight: 700, background: 'var(--card)', border: '1px solid var(--border)',
+          color: 'var(--text)', borderRadius: 3, padding: '5px 8px', cursor: 'pointer',
+        }}>
+          {years.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
         <button onClick={runBackfill} disabled={backfilling} style={{
           marginLeft: 'auto', padding: '5px 12px', fontSize: 11, fontWeight: 700,
           background: 'transparent', border: `1px solid ${ACCENT}`, borderRadius: 3, color: ACCENT,
@@ -491,6 +526,10 @@ function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId
         <div style={{ padding: '8px 24px 28px', fontSize: 12, color: 'var(--muted)' }}>
           No billing history yet — either wait for the daily cost refresh to accumulate real days, or click Backfill above to pull actual past months from Azure Cost Management right now.
         </div>
+      ) : visibleMonths.length === 0 ? (
+        <div style={{ padding: '8px 24px 28px', fontSize: 12, color: 'var(--muted)' }}>
+          No billing history for {selectedYear}. Try a different year, or click Backfill above to pull more real months from Azure Cost Management.
+        </div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -503,7 +542,7 @@ function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId
               </tr>
             </thead>
             <tbody>
-              {months.map(m => (
+              {visibleMonths.map(m => (
                 <tr key={m.key} style={{ borderTop: `1px solid ${DIVIDER}` }}>
                   <td style={{ padding: '18px 24px', fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
                     {m.label}
@@ -601,7 +640,7 @@ function SpendView() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-          {refreshing ? statusNote : data && !data.noData ? `Last refreshed: ${new Date(data.fetchedAt).toLocaleTimeString()} · Month-to-date` : ''}
+          {refreshing ? statusNote : data && !data.noData ? `Last refreshed: ${new Date(data.fetchedAt).toLocaleDateString()} ${new Date(data.fetchedAt).toLocaleTimeString()} · Month-to-date` : ''}
         </div>
         <button onClick={requestRefresh} disabled={loading || refreshing} style={{
           marginLeft: 'auto', padding: '5px 12px', fontSize: 11, fontWeight: 700,
