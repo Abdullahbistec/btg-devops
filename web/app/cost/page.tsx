@@ -595,10 +595,12 @@ function SpendView() {
 
   useEffect(() => { load(); }, []);
 
-  /** This never calls Azure directly — it queues a request that a scheduled
-   * Claude Code routine picks up via the MCP server (cmd/mcp.go --http),
-   * same mechanism as the AI Assistant's Summarize button. See
-   * docs/ai-analysis-routine-setup.md. */
+  /** POST /api/cost-requests processes this synchronously, in the same
+   * request — it calls Azure Cost Management directly server-side, no MCP
+   * server or scheduled Claude Code routine involved (see that route's own
+   * comment). The polling loop below still exists because the endpoint
+   * returns 202 with a request id rather than the result inline, and as a
+   * safety net if a request is ever left pending for some other reason. */
   async function requestRefresh() {
     setRefreshing(true);
     setError('');
