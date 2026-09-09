@@ -3,9 +3,9 @@ import { listFindings, getDashboardStats } from '@/lib/db';
 const TOP_FINDINGS_LIMIT = 20;
 
 /**
- * Builds the same findings-summary text block for both the synchronous
- * Gemini-backed assistant (/api/assistant) and the async MCP get_audit_data
- * tool — one place instead of two so the two paths can't drift on what
+ * Builds the findings-summary text block consumed by the async MCP
+ * get_audit_data tool — kept as its own function (not inlined into that
+ * route) so a future second caller doesn't have to re-derive what
  * "context" means.
  */
 export async function buildAuditContext(auditId?: string, scope: string = 'all'): Promise<string> {
