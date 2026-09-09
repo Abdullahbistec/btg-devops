@@ -5,10 +5,11 @@
     "title": "BTG DevOps Architecture",
     "output": "architecture-diagram.html",
     "quality_profile": "showcase",
-    "viewBox": [1250, 715],
+    "viewBox": [1250, 685],
+    "repository": { "url": "https://github.com/Abdullahbistec/btg-devops.git", "revision": "8a1bb25855dfcf8a970612db4355a768fd8a0636" },
     "views": [
       { "id": "audit-path", "label": "Scheduled audit to dashboard", "focus": ["github-actions", "go-cli", "azure", "web-api", "postgres", "web-ui", "users"], "note": "Cron trigger runs Azure analyzers, findings are persisted, and the dashboard renders them for the browser." },
-      { "id": "async-agent", "label": "Async AI agent path", "focus": ["claude-agent", "mcp-server", "web-api", "postgres"], "note": "Design only — the MCP process is built but never started and no routine is configured, so queued Summarize requests stay pending." },
+      { "id": "async-agent", "label": "Async AI agent path", "focus": ["claude-agent", "mcp-server", "web-api", "postgres"], "note": "Queuing Summarize now auto-spawns a local claude -p agent (CLAUDE_DRAIN_ENABLED) that drains both queues via the MCP server." },
       { "id": "self-heal", "label": "Self-healing scheduler", "focus": ["scheduler", "go-cli", "web-api", "mailer"], "note": "In-process scheduler re-triggers audits and cost refresh, then emails outcomes." }
     ]
   },
@@ -22,8 +23,8 @@
     { "id": "scheduler", "type": "backend", "label": "Background Scheduler", "sublabel": "60s in-process poller", "pos": [310, 470], "size": [150, 64] },
     { "id": "postgres", "type": "database", "label": "PostgreSQL", "sublabel": "findings & schedules", "pos": [580, 470], "size": [150, 64] },
     { "id": "mailer", "type": "external", "label": "SMTP Mailer", "sublabel": "Resend / nodemailer", "pos": [850, 470], "size": [150, 64] },
-    { "id": "claude-agent", "type": "external", "label": "Claude Code Agent", "sublabel": "routine, not configured", "pos": [40, 630], "size": [160, 64], "tag": "not configured" },
-    { "id": "mcp-server", "type": "backend", "label": "MCP Server", "sublabel": "cmd/mcp.go, not running", "pos": [310, 630], "size": [150, 64], "tag": "not running" }
+    { "id": "claude-agent", "type": "external", "label": "Claude Code Agent", "sublabel": "spawned via routine-trigger.ts", "pos": [40, 600], "size": [160, 64], "tag": "CLAUDE_DRAIN_ENABLED", "sources": [{ "path": "web/lib/routine-trigger.ts", "line": 48, "end_line": 71, "label": "triggerQueueDrain()" }] },
+    { "id": "mcp-server", "type": "backend", "label": "MCP Server", "sublabel": "cmd/mcp.go, started manually", "pos": [310, 600], "size": [150, 64], "tag": "port 8090" }
   ],
   "boundaries": [
     { "kind": "security-group", "label": "GitHub-hosted runner — ephemeral, holds Azure/Hetzner/PP secrets", "wraps": ["github-actions"] },
@@ -39,11 +40,12 @@
     { "id": "ui-to-users", "from": "web-ui", "to": "users", "label": "HTTPS", "variant": "emphasis" },
     { "id": "scheduler-to-cli", "from": "scheduler", "to": "go-cli", "label": "spawn binary", "fromSide": "right", "toSide": "left", "via": [[470, 502], [470, 122]] },
     { "id": "api-to-mailer", "from": "web-api", "to": "mailer", "label": "audit summary / failure email", "fromSide": "right", "toSide": "left", "via": [[800, 312], [800, 502]] },
+    { "id": "api-to-claude", "from": "web-api", "to": "claude-agent", "label": "spawns claude -p on Summarize", "variant": "dashed", "fromSide": "left", "toSide": "top", "via": [[500, 312], [500, 550], [120, 550]], "labelAt": [300, 564] },
     { "id": "claude-to-mcp", "from": "claude-agent", "to": "mcp-server", "label": "MCP over HTTP", "variant": "dashed", "labelDy": -26 },
-    { "id": "mcp-to-api", "from": "mcp-server", "to": "web-api", "label": "polls internal API", "variant": "dashed", "fromSide": "right", "toSide": "left", "via": [[570, 662], [570, 312]], "labelDy": -11 }
+    { "id": "mcp-to-api", "from": "mcp-server", "to": "web-api", "label": "tool calls via internal API", "variant": "dashed", "fromSide": "right", "toSide": "left", "via": [[570, 632], [570, 312]], "labelAt": [570, 590] }
   ],
   "cards": [
     { "dot": "cyan", "title": "Go analyzers & routes", "items": ["12 domains: Storage, NSG, IAM, Key Vault, Cosmos DB, ACR, App Service, Functions, Public IP, Cognitive Services, Resource Group, App Service Plan — plus Hetzner and Power Platform scopes", "Routes: /api/schedule, /audits, /findings, /cost/*, /internal/*, /auth/*"] },
-    { "dot": "rose", "title": "Trust & self-heal", "items": ["SP creds encrypted in Postgres or held as GitHub Secrets; DATABASE_URL known only to the Next.js server; browser never queries Postgres or Azure directly", "Scheduler self-heals: due schedules, daily cost refresh + backfill, stale-audit timeout"] }
+    { "dot": "rose", "title": "Trust & self-heal", "items": ["SP creds encrypted in Postgres or held as GitHub Secrets; DATABASE_URL known only to the Next.js server; browser never queries Postgres or Azure directly", "Scheduler self-heals: due schedules, daily cost refresh + backfill, stale-audit timeout", "CLAUDE_DRAIN_ENABLED spawns an agent with real tool access per HTTP request — local-only, never on a shared deployment"] }
   ]
 }
