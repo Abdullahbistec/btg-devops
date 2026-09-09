@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "BTG DevOps Architecture",
+    "output": "architecture-diagram.html",
+    "quality_profile": "showcase",
+    "viewBox": [1250, 715],
+    "views": [
+      { "id": "audit-path", "label": "Scheduled audit to dashboard", "focus": ["github-actions", "go-cli", "azure", "web-api", "postgres", "web-ui", "users"], "note": "Cron trigger runs Azure analyzers, findings are persisted, and the dashboard renders them for the browser." },
+      { "id": "async-agent", "label": "Async AI agent path", "focus": ["claude-agent", "mcp-server", "web-api", "postgres"], "note": "Design only — the MCP process is built but never started and no routine is configured, so queued Summarize requests stay pending." },
+      { "id": "self-heal", "label": "Self-healing scheduler", "focus": ["scheduler", "go-cli", "web-api", "mailer"], "note": "In-process scheduler re-triggers audits and cost refresh, then emails outcomes." }
+    ]
+  },
+  "components": [
+    { "id": "github-actions", "type": "cloud", "label": "GitHub Actions", "sublabel": "cron, 4x/day", "pos": [310, 90], "size": [150, 64] },
+    { "id": "go-cli", "type": "backend", "label": "Go CLI Analyzer", "sublabel": "btg-devops binary", "pos": [580, 90], "size": [150, 64], "tag": "12 analyzers" },
+    { "id": "azure", "type": "external", "label": "Azure ARM & Cost Mgmt", "sublabel": "Resource Manager APIs", "pos": [850, 90], "size": [160, 64] },
+    { "id": "web-api", "type": "backend", "label": "Next.js API Server", "sublabel": "app/api/* routes", "pos": [580, 280], "size": [150, 64] },
+    { "id": "web-ui", "type": "frontend", "label": "Dashboard UI", "sublabel": "Next.js pages (client)", "pos": [850, 280], "size": [150, 64] },
+    { "id": "users", "type": "external", "label": "Admin / Viewer", "sublabel": "Browser, role-gated", "pos": [1080, 280], "size": [130, 64] },
+    { "id": "scheduler", "type": "backend", "label": "Background Scheduler", "sublabel": "60s in-process poller", "pos": [310, 470], "size": [150, 64] },
+    { "id": "postgres", "type": "database", "label": "PostgreSQL", "sublabel": "findings & schedules", "pos": [580, 470], "size": [150, 64] },
+    { "id": "mailer", "type": "external", "label": "SMTP Mailer", "sublabel": "Resend / nodemailer", "pos": [850, 470], "size": [150, 64] },
+    { "id": "claude-agent", "type": "external", "label": "Claude Code Agent", "sublabel": "routine, not configured", "pos": [40, 630], "size": [160, 64], "tag": "not configured" },
+    { "id": "mcp-server", "type": "backend", "label": "MCP Server", "sublabel": "cmd/mcp.go, not running", "pos": [310, 630], "size": [150, 64], "tag": "not running" }
+  ],
+  "boundaries": [
+    { "kind": "security-group", "label": "GitHub-hosted runner — ephemeral, holds Azure/Hetzner/PP secrets", "wraps": ["github-actions"] },
+    { "kind": "security-group", "label": "Next.js server — trusted backend, holds DATABASE_URL and decrypted credentials", "wraps": ["web-api", "scheduler"] },
+    { "kind": "region", "label": "Browser client — session-authenticated, no direct DB or Azure access", "wraps": ["users", "web-ui"] }
+  ],
+  "connections": [
+    { "id": "gha-to-cli", "from": "github-actions", "to": "go-cli", "label": "cron: analyze all", "variant": "emphasis" },
+    { "id": "cli-to-azure", "from": "go-cli", "to": "azure", "label": "ARM + Cost Mgmt calls", "variant": "emphasis" },
+    { "id": "cli-to-api", "from": "go-cli", "to": "web-api", "label": "findings JSON", "variant": "emphasis", "labelDy": 24 },
+    { "id": "api-to-db", "from": "web-api", "to": "postgres", "label": "persist / query findings", "variant": "emphasis", "labelDy": 24 },
+    { "id": "api-to-ui", "from": "web-api", "to": "web-ui", "label": "dashboard data", "variant": "emphasis" },
+    { "id": "ui-to-users", "from": "web-ui", "to": "users", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "scheduler-to-cli", "from": "scheduler", "to": "go-cli", "label": "spawn binary", "fromSide": "right", "toSide": "left", "via": [[470, 502], [470, 122]] },
+    { "id": "api-to-mailer", "from": "web-api", "to": "mailer", "label": "audit summary / failure email", "fromSide": "right", "toSide": "left", "via": [[800, 312], [800, 502]] },
+    { "id": "claude-to-mcp", "from": "claude-agent", "to": "mcp-server", "label": "MCP over HTTP", "variant": "dashed", "labelDy": -26 },
+    { "id": "mcp-to-api", "from": "mcp-server", "to": "web-api", "label": "polls internal API", "variant": "dashed", "fromSide": "right", "toSide": "left", "via": [[570, 662], [570, 312]], "labelDy": -11 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Go analyzers & routes", "items": ["12 domains: Storage, NSG, IAM, Key Vault, Cosmos DB, ACR, App Service, Functions, Public IP, Cognitive Services, Resource Group, App Service Plan — plus Hetzner and Power Platform scopes", "Routes: /api/schedule, /audits, /findings, /cost/*, /internal/*, /auth/*"] },
+    { "dot": "rose", "title": "Trust & self-heal", "items": ["SP creds encrypted in Postgres or held as GitHub Secrets; DATABASE_URL known only to the Next.js server; browser never queries Postgres or Azure directly", "Scheduler self-heals: due schedules, daily cost refresh + backfill, stale-audit timeout"] }
+  ]
+}
