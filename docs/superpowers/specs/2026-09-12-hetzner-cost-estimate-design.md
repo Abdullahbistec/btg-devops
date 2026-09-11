@@ -196,9 +196,17 @@ end up in an executive summary as though it were an invoice.
   back to the first price silently under- or over-states. Fall back
   explicitly and surface it.
 
+## Decisions
+
+1. **Powered-off servers count toward the run rate.** *(decided 2026-09-12)*
+   Hetzner bills for them, so excluding them would understate what the
+   account actually costs. They are separately flagged as waste by the
+   existing "Stopped Server — Still Billed" finding in
+   `cmd/hetzner_servers.go`, which is the right division of labour: the cost
+   view reports what is being spent, the findings view argues about whether
+   it should be.
+
 ## Open questions
 
-1. Should the run-rate include **powered-off servers**? Hetzner still bills
-   for them, so yes by default — but they arguably belong flagged as waste.
-2. Does the 2,960/yr figure warrant a **budget threshold** for Hetzner, the
+1. Does the ~$2,960/yr figure warrant a **budget threshold** for Hetzner, the
    way `monthly_budget` works for Azure subscriptions?
