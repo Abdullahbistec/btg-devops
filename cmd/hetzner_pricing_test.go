@@ -27,7 +27,10 @@ func TestHetznerPricing_Currency(t *testing.T) {
 func TestHetznerPricing_VolumeMonthlyPerGB(t *testing.T) {
 	// Regression guard: this was hardcoded at 0.0440 and drifted badly.
 	// The point is that the number comes from the payload, not source.
-	got := loadPricingFixture(t).VolumeMonthlyPerGB()
+	got, ok := loadPricingFixture(t).VolumeMonthlyPerGB()
+	if !ok {
+		t.Fatal("VolumeMonthlyPerGB() reported a miss, want found")
+	}
 	if got <= 0.05 || got >= 0.12 {
 		t.Errorf("VolumeMonthlyPerGB() = %v, want a plausible live price", got)
 	}
@@ -57,5 +60,26 @@ func TestHetznerPricing_ServerMonthly_UnknownLocationFallsBack(t *testing.T) {
 	price, ok := loadPricingFixture(t).ServerMonthly("cpx11", "no-such-location")
 	if !ok || price <= 0 {
 		t.Errorf("got (%v, %v), want a fallback price", price, ok)
+	}
+}
+
+func TestHetznerPricing_ServerMonthly_MalformedGrossReportsMiss(t *testing.T) {
+	// A malformed gross string must never parse to a silent 0 — that would
+	// price the server for free instead of surfacing the bad payload data.
+	// Built inline rather than in the captured fixture, which must stay a
+	// faithful copy of the live response.
+	p := &hetznerPricing{}
+	p.Pricing.Currency = "USD"
+	p.Pricing.ServerTypes = []hetznerServerTypePrice{
+		{
+			Name: "cpx11",
+			Prices: []hetznerLocationPrice{
+				{Location: "fsn1", PriceMonthly: hetznerPriceAmount{Gross: "not-a-number"}},
+			},
+		},
+	}
+
+	if _, ok := p.ServerMonthly("cpx11", "fsn1"); ok {
+		t.Error("ServerMonthly with malformed gross reported found, want miss")
 	}
 }

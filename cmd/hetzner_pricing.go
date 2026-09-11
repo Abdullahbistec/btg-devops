@@ -73,27 +73,32 @@ func fetchHetznerPricing(ctx context.Context, token string) (*hetznerPricing, er
 
 func (p *hetznerPricing) Currency() string { return p.Pricing.Currency }
 
-func parseAmount(a hetznerPriceAmount) float64 {
+// parseAmount reports (0, false) when the gross string cannot be parsed,
+// rather than silently returning 0 as a valid price — a malformed payload
+// must surface as a miss, not as a free resource.
+func parseAmount(a hetznerPriceAmount) (float64, bool) {
 	v, err := strconv.ParseFloat(a.Gross, 64)
 	if err != nil {
-		return 0
+		return 0, false
 	}
-	return v
+	return v, true
 }
 
 // pickLocation returns the price for loc, falling back to the first entry
 // when the location is absent. Locations price near-identically, so the
-// fallback is sound — returning 0 would not be.
+// fallback is sound — returning 0 would not be. If the matched entry's
+// gross amount fails to parse, this reports a miss (0, false) rather than
+// a silent 0 — a malformed price must never look like a free resource.
 func pickLocation(prices []hetznerLocationPrice, loc string) (float64, bool) {
 	if len(prices) == 0 {
 		return 0, false
 	}
 	for _, pr := range prices {
 		if pr.Location == loc {
-			return parseAmount(pr.PriceMonthly), true
+			return parseAmount(pr.PriceMonthly)
 		}
 	}
-	return parseAmount(prices[0].PriceMonthly), true
+	return parseAmount(prices[0].PriceMonthly)
 }
 
 func (p *hetznerPricing) ServerMonthly(typeName, location string) (float64, bool) {
@@ -105,7 +110,10 @@ func (p *hetznerPricing) ServerMonthly(typeName, location string) (float64, bool
 	return 0, false
 }
 
-func (p *hetznerPricing) VolumeMonthlyPerGB() float64 {
+// VolumeMonthlyPerGB reports (0, false) when the payload's volume price is
+// missing or malformed, rather than returning 0 as if volumes were free —
+// see the package-level no-silent-zero convention.
+func (p *hetznerPricing) VolumeMonthlyPerGB() (float64, bool) {
 	return parseAmount(p.Pricing.Volume.PricePerGBMonth)
 }
 

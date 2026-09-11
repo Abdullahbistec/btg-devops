@@ -116,7 +116,11 @@ func computeHetznerVolumesFindings(ctx context.Context, token string) (HetznerVo
 	if err != nil {
 		return HetznerVolumeReport{}, fmt.Errorf("fetching hetzner pricing: %w", err)
 	}
-	findings := hetznerVolumeFindings(volumes, &summary, pricing.VolumeMonthlyPerGB(), pricing.Currency())
+	perGB, ok := pricing.VolumeMonthlyPerGB()
+	if !ok {
+		return HetznerVolumeReport{}, fmt.Errorf("hetzner pricing payload has no usable volume price")
+	}
+	findings := hetznerVolumeFindings(volumes, &summary, perGB, pricing.Currency())
 
 	for _, f := range findings {
 		summary.FindingsBySeverity[string(f.Severity)]++

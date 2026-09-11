@@ -83,12 +83,29 @@ func hetznerCostReport(servers []hetznerServer, volumes []hetznerVolume, ips []h
 		r.ByType[s.ServerType.Name] = line
 	}
 
-	perGB := p.VolumeMonthlyPerGB()
-	for _, v := range volumes {
-		r.ByCategory["volumes"] += float64(v.Size) * perGB
+	if len(volumes) > 0 {
+		perGB, ok := p.VolumeMonthlyPerGB()
+		if !ok {
+			// The payload's volume price is missing or malformed — flag the
+			// whole group as a single miss rather than silently pricing
+			// every volume at 0.
+			r.Unpriced = append(r.Unpriced, fmt.Sprintf("%d volumes (no volume price in payload)", len(volumes)))
+		} else {
+			for _, v := range volumes {
+				r.ByCategory["volumes"] += float64(v.Size) * perGB
+			}
+		}
 	}
 
 	for _, ip := range ips {
+		// IPv6 primary IPs carry no price entry because Hetzner does not
+		// bill for them — skip them before the lookup so they never show
+		// up as a false "unpriced" gap. Unpriced exists to flag genuine
+		// lookup misses; a guaranteed-nonzero entry trains readers to
+		// ignore the list.
+		if ip.Type == "ipv6" {
+			continue
+		}
 		cost, ok := p.PrimaryIPMonthly(ip.Type, ip.Datacenter.Location.Name)
 		if !ok {
 			r.Unpriced = append(r.Unpriced, fmt.Sprintf("primary ip %s (type %s)", ip.Name, ip.Type))

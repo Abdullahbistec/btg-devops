@@ -44,3 +44,45 @@ func TestHetznerCostReport_RecordsUnpricedResources(t *testing.T) {
 		t.Errorf("Unpriced = %v, want the unpriced server named", r.Unpriced)
 	}
 }
+
+func TestHetznerCostReport_MissingVolumePriceIsUnpricedNotZero(t *testing.T) {
+	// Built inline with a malformed volume price rather than editing the
+	// captured fixture, which must stay a faithful copy of the live
+	// response.
+	p := &hetznerPricing{}
+	p.Pricing.Currency = "USD"
+	p.Pricing.Volume.PricePerGBMonth = hetznerPriceAmount{Gross: "not-a-number"}
+
+	volumes := []hetznerVolume{{Name: "v1", Size: 100}, {Name: "v2", Size: 50}}
+
+	r := hetznerCostReport(nil, volumes, nil, p)
+
+	if r.ByCategory["volumes"] != 0 {
+		t.Errorf("ByCategory[volumes] = %v, want 0 (excluded, not silently priced)", r.ByCategory["volumes"])
+	}
+	if r.TotalMonthly != 0 {
+		t.Errorf("TotalMonthly = %v, want 0", r.TotalMonthly)
+	}
+	if len(r.Unpriced) != 1 || !strings.Contains(r.Unpriced[0], "2 volumes") {
+		t.Errorf("Unpriced = %v, want a single entry naming the 2 volumes as a group", r.Unpriced)
+	}
+}
+
+func TestHetznerCostReport_IPv6PrimaryIPIsFreeNotUnpriced(t *testing.T) {
+	p := loadPricingFixture(t)
+	ips := []hetznerPrimaryIP{
+		{Name: "ip-v6", Type: "ipv6", Datacenter: hetznerDatacenter{Location: hetznerLocation{Name: "fsn1"}}},
+	}
+
+	r := hetznerCostReport(nil, nil, ips, p)
+
+	if len(r.Unpriced) != 0 {
+		t.Errorf("Unpriced = %v, want empty — IPv6 primary IPs are free by design, not a lookup miss", r.Unpriced)
+	}
+	if r.ByCategory["primary_ips"] != 0 {
+		t.Errorf("ByCategory[primary_ips] = %v, want 0", r.ByCategory["primary_ips"])
+	}
+	if r.TotalMonthly != 0 {
+		t.Errorf("TotalMonthly = %v, want 0", r.TotalMonthly)
+	}
+}
