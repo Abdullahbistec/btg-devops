@@ -23,6 +23,8 @@ type StorageFinding struct {
 	ResourceGroup  string   `json:"resource_group"`
 	Description    string   `json:"description"`
 	Recommendation string   `json:"recommendation"`
+	Confidence     float64  `json:"confidence,omitempty"`
+	Reasoning      string   `json:"reasoning,omitempty"`
 }
 
 type StorageSummary struct {
@@ -66,7 +68,12 @@ func runStorage(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("azure auth failed: %w", err)
 	}
 
-	report, err := computeStorageFindings(ctx, cred, subID)
+	var report StorageReport
+	if flagEngine == "rules" {
+		report, err = computeStorageFindings(ctx, cred, subID)
+	} else {
+		report, err = runStorageAnalysis(ctx, cred, subID, defaultClaudeSpawn)
+	}
 	if err != nil {
 		return err
 	}

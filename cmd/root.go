@@ -13,6 +13,14 @@ var rootCmd = &cobra.Command{
 	Long:  "A DevOps CLI that examines Azure subscriptions for anomalies, cost savings, misconfigurations, and best practices.",
 }
 
+// flagEngine selects the analysis engine: "claude" (default, falls back to
+// rules on failure) or "rules" (force the original Go rule-check logic).
+var flagEngine string
+
+func init() {
+	rootCmd.PersistentFlags().StringVar(&flagEngine, "engine", "claude", "Analysis engine: 'claude' (default, falls back to rules on failure) or 'rules' (force the original Go rule-check logic)")
+}
+
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

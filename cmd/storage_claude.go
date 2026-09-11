@@ -1,0 +1,98 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"time"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/google/uuid"
+)
+
+// claudeAnalysisTimeout bounds both the spawned claude process and the wait
+// for its handoff file. It is a var (not a const) so tests can shrink it and
+// keep the timeout-fallback test fast without a real 60s wait.
+var claudeAnalysisTimeout = 60 * time.Second
+
+// storageFetcher abstracts fetchStorageAccounts so tests can stub out the
+// Azure round-trip. This matters because a nil *azidentity.DefaultAzureCredential
+// (as used in tests that don't have live Azure credentials) doesn't make
+// fetchStorageAccounts return an error — it panics deep inside the azidentity
+// SDK's token-acquisition chain (a nil-receiver dereference), before any
+// network call happens. Overriding this var lets tests exercise
+// runStorageAnalysis's Claude/fallback decision without hitting that panic.
+var storageFetcher = fetchStorageAccounts
+
+// ClaudeSpawner spawns `claude -p` for one service's analysis. Injected so
+// tests can stub success/failure without a real claude binary.
+type ClaudeSpawner func(promptPath, requestID, rawDataPath string, timeout time.Duration) error
+
+func defaultClaudeSpawn(promptPath, requestID, rawDataPath string, timeout time.Duration) error {
+	prompt, err := os.ReadFile(promptPath)
+	if err != nil {
+		return fmt.Errorf("reading prompt file: %w", err)
+	}
+	fullPrompt := fmt.Sprintf("%s\n\nYour request_id is: %s\nRaw resource data is in the file: %s (read it with your file tools)", string(prompt), requestID, rawDataPath)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	c := exec.CommandContext(ctx, "claude", "-p", fullPrompt, "--allowedTools", "mcp__btg-devops__submit_findings,Read")
+	return c.Run()
+}
+
+// runStorageAnalysis tries a Claude-based judgment first; on any failure
+// (spawn error, or the handoff file never appearing within the timeout)
+// it falls back to the existing Go rule-check logic on the same fetched
+// data. Both paths reuse fetchStorageAccounts so raw data is fetched once.
+func runStorageAnalysis(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string, spawn ClaudeSpawner) (StorageReport, error) {
+	accounts, mgmtPolicyClient, err := storageFetcher(ctx, cred, subID, flagResourceGroup)
+	if err != nil {
+		return StorageReport{}, err
+	}
+
+	rawData, err := json.Marshal(accounts)
+	if err != nil {
+		return analyzeStorageAccounts(accounts, mgmtPolicyClient, ctx), nil // marshal failure -> fallback
+	}
+	rawDataPath := filepath.Join(os.TempDir(), "btg-rawdata-"+uuid.NewString()+".json")
+	if werr := os.WriteFile(rawDataPath, rawData, 0600); werr != nil {
+		return analyzeStorageAccounts(accounts, mgmtPolicyClient, ctx), nil
+	}
+	defer os.Remove(rawDataPath)
+
+	requestID, resultPath := NewHandoffRequest()
+	if serr := spawn("docs/prompts/storage.md", requestID, rawDataPath, claudeAnalysisTimeout); serr != nil {
+		fmt.Fprintf(os.Stderr, "[storage] Claude analysis failed to start (%v), falling back to rule-based analysis\n", serr)
+		return analyzeStorageAccounts(accounts, mgmtPolicyClient, ctx), nil
+	}
+
+	findings, werr := WaitForHandoff(resultPath, claudeAnalysisTimeout)
+	if werr != nil {
+		fmt.Fprintf(os.Stderr, "[storage] Claude analysis timed out or failed (%v), falling back to rule-based analysis\n", werr)
+		return analyzeStorageAccounts(accounts, mgmtPolicyClient, ctx), nil
+	}
+
+	return handoffFindingsToStorageReport(findings), nil
+}
+
+func handoffFindingsToStorageReport(findings []HandoffFinding) StorageReport {
+	summary := StorageSummary{FindingsBySeverity: map[string]int{}, ByKind: map[string]int{}, ByReplication: map[string]int{}}
+	out := make([]StorageFinding, len(findings))
+	for i, f := range findings {
+		out[i] = StorageFinding{
+			Severity:       Severity(f.Severity),
+			Category:       f.Category,
+			StorageAccount: f.Resource,
+			Description:    f.Description,
+			Recommendation: f.Recommendation,
+			Confidence:     f.Confidence,
+			Reasoning:      f.Reasoning,
+		}
+		summary.FindingsBySeverity[f.Severity]++
+	}
+	return StorageReport{Summary: summary, Findings: out}
+}
