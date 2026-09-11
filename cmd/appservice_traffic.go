@@ -244,6 +244,30 @@ func runAppServiceTraffic(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// ClassifyTrafficStatus applies the traffic classification rules to a pre-populated report.
+func ClassifyTrafficStatus(report *AppTrafficReport) {
+	switch {
+	case report.TotalRequests == 0 && report.BytesReceived == 0 && report.BytesSent == 0:
+		report.Status = "Idle/Unused"
+		report.Recommendation = "No traffic in 14 days. Consider shutting down or deleting to save costs."
+	case report.TotalRequests < 100:
+		report.Status = "Low Traffic"
+		report.Recommendation = "Very low traffic. Consider scaling down or consolidating."
+	case report.TotalRequests < 1000:
+		report.Status = "Low Traffic"
+		report.Recommendation = "Low traffic. Review if this app is still needed at current scale."
+	default:
+		report.Status = "Active"
+		report.Recommendation = "Normal traffic levels."
+	}
+	if report.TotalRequests > 0 {
+		errorRate := report.Http5xx / report.TotalRequests * 100
+		if errorRate > 10 {
+			report.Recommendation += fmt.Sprintf(" ⚠️  High 5xx error rate (%.1f%%).", errorRate)
+		}
+	}
+}
+
 func sumMetricTimeseries(timeseries []*armmonitor.TimeSeriesElement) float64 {
 	var total float64
 	for _, ts := range timeseries {

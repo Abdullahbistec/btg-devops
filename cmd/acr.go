@@ -315,6 +315,117 @@ func computeACRFindings(ctx context.Context, cred *azidentity.DefaultAzureCreden
 	return report, nil
 }
 
+// AnalyzeACRFindings runs ACR checks on pre-fetched data — no Azure calls.
+// Skips geo-replication check (requires Azure client).
+func AnalyzeACRFindings(registries []*armcontainerregistry.Registry) []ACRFinding {
+	var findings []ACRFinding
+	for _, reg := range registries {
+		name := deref(reg.Name)
+		rg := extractResourceGroup(deref(reg.ID))
+		props := reg.Properties
+		if props == nil {
+			continue
+		}
+
+		if props.AdminUserEnabled != nil && *props.AdminUserEnabled {
+			findings = append(findings, ACRFinding{
+				Severity: Critical, Category: "Admin Account Enabled",
+				RegistryName: name, ResourceGroup: rg,
+				Description:    "Admin user account is enabled — allows username/password authentication",
+				Recommendation: "Disable admin account and use Azure AD service principals or managed identities for authentication.",
+			})
+		}
+
+		if props.PublicNetworkAccess != nil && *props.PublicNetworkAccess == armcontainerregistry.PublicNetworkAccessEnabled {
+			findings = append(findings, ACRFinding{
+				Severity: Warning, Category: "Public Network Access",
+				RegistryName: name, ResourceGroup: rg,
+				Description:    "Public network access is enabled — registry is accessible from the internet",
+				Recommendation: "Disable public network access and use private endpoints for secure connectivity.",
+			})
+		}
+
+		if len(props.PrivateEndpointConnections) == 0 {
+			findings = append(findings, ACRFinding{
+				Severity: Warning, Category: "No Private Endpoint",
+				RegistryName: name, ResourceGroup: rg,
+				Description:    "No private endpoint connections configured",
+				Recommendation: "Configure private endpoints to restrict registry access to your virtual network.",
+			})
+		}
+
+		if reg.SKU != nil && reg.SKU.Name != nil && *reg.SKU.Name == armcontainerregistry.SKUNamePremium {
+			if props.Policies != nil && props.Policies.RetentionPolicy != nil {
+				if props.Policies.RetentionPolicy.Status != nil && *props.Policies.RetentionPolicy.Status == armcontainerregistry.PolicyStatusDisabled {
+					findings = append(findings, ACRFinding{
+						Severity: Warning, Category: "Retention Policy Disabled",
+						RegistryName: name, ResourceGroup: rg,
+						Description:    "Retention policy is disabled — untagged manifests will accumulate indefinitely",
+						Recommendation: "Enable retention policy to automatically purge untagged manifests and reduce storage costs.",
+					})
+				}
+			} else {
+				findings = append(findings, ACRFinding{
+					Severity: Warning, Category: "No Retention Policy",
+					RegistryName: name, ResourceGroup: rg,
+					Description:    "No retention policy configured — untagged manifests will accumulate indefinitely",
+					Recommendation: "Configure a retention policy to automatically purge untagged manifests.",
+				})
+			}
+
+			if props.Encryption == nil || props.Encryption.Status == nil || *props.Encryption.Status == armcontainerregistry.EncryptionStatusDisabled {
+				findings = append(findings, ACRFinding{
+					Severity: Info, Category: "No Customer-Managed Key",
+					RegistryName: name, ResourceGroup: rg,
+					Description:    "Encryption with customer-managed key is not enabled (using platform-managed key)",
+					Recommendation: "Consider enabling encryption with a customer-managed key for enhanced control over encryption.",
+				})
+			}
+
+			if props.Policies != nil && props.Policies.TrustPolicy != nil {
+				if props.Policies.TrustPolicy.Status != nil && *props.Policies.TrustPolicy.Status == armcontainerregistry.PolicyStatusDisabled {
+					findings = append(findings, ACRFinding{
+						Severity: Info, Category: "Content Trust Disabled",
+						RegistryName: name, ResourceGroup: rg,
+						Description:    "Content trust (image signing) is not enabled",
+						Recommendation: "Enable content trust to ensure only signed images can be deployed.",
+					})
+				}
+			}
+
+			if props.Policies != nil && props.Policies.ExportPolicy != nil {
+				if props.Policies.ExportPolicy.Status != nil && *props.Policies.ExportPolicy.Status == armcontainerregistry.ExportPolicyStatusEnabled {
+					findings = append(findings, ACRFinding{
+						Severity: Info, Category: "Export Policy Enabled",
+						RegistryName: name, ResourceGroup: rg,
+						Description:    "Export policy is enabled — images can be exported out of the registry",
+						Recommendation: "Consider disabling export policy to prevent data exfiltration via image export.",
+					})
+				}
+			}
+
+			if props.ZoneRedundancy != nil && *props.ZoneRedundancy == armcontainerregistry.ZoneRedundancyDisabled {
+				findings = append(findings, ACRFinding{
+					Severity: Info, Category: "No Zone Redundancy",
+					RegistryName: name, ResourceGroup: rg,
+					Description:    "Zone redundancy is not enabled for this Premium registry",
+					Recommendation: "Enable zone redundancy for higher availability within a region.",
+				})
+			}
+		}
+
+		if reg.SKU != nil && reg.SKU.Name != nil && *reg.SKU.Name == armcontainerregistry.SKUNameBasic {
+			findings = append(findings, ACRFinding{
+				Severity: Info, Category: "Basic SKU",
+				RegistryName: name, ResourceGroup: rg,
+				Description:    "Using Basic SKU — limited storage, throughput, and no geo-replication or private endpoints",
+				Recommendation: "Upgrade to Standard or Premium SKU for production workloads.",
+			})
+		}
+	}
+	return findings
+}
+
 // ---------- provider registration ----------
 
 type acrProviderAdapter struct{}

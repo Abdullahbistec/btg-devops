@@ -272,6 +272,110 @@ func computeNSGFindings(ctx context.Context, cred *azidentity.DefaultAzureCreden
 	return report, nil
 }
 
+// AnalyzeNSGFindings runs NSG checks on pre-fetched data — no Azure calls.
+func AnalyzeNSGFindings(nsgs []*armnetwork.SecurityGroup) []NSGFinding {
+	var findings []NSGFinding
+	for _, nsg := range nsgs {
+		name := deref(nsg.Name)
+		rg := extractResourceGroup(deref(nsg.ID))
+		props := nsg.Properties
+		if props == nil {
+			continue
+		}
+
+		subnetCount, nicCount := 0, 0
+		if props.Subnets != nil {
+			subnetCount = len(props.Subnets)
+		}
+		if props.NetworkInterfaces != nil {
+			nicCount = len(props.NetworkInterfaces)
+		}
+		if subnetCount == 0 && nicCount == 0 {
+			findings = append(findings, NSGFinding{
+				Severity: Warning, Category: "Unassociated NSG",
+				NSGName: name, ResourceGroup: rg,
+				Description:    "NSG is not associated with any subnet or network interface",
+				Recommendation: "Remove unused NSGs or associate them with appropriate resources.",
+			})
+		}
+
+		var allRules []*armnetwork.SecurityRule
+		if props.SecurityRules != nil {
+			allRules = append(allRules, props.SecurityRules...)
+		}
+
+		for _, rule := range allRules {
+			if rule.Properties == nil || rule.Name == nil {
+				continue
+			}
+			rp := rule.Properties
+			ruleName := *rule.Name
+
+			if rp.Access == nil || *rp.Access != armnetwork.SecurityRuleAccessAllow {
+				continue
+			}
+			if rp.Direction == nil || *rp.Direction != armnetwork.SecurityRuleDirectionInbound {
+				continue
+			}
+
+			srcAddr := deref(rp.SourceAddressPrefix)
+			dstPort := deref(rp.DestinationPortRange)
+			protocol := ""
+			if rp.Protocol != nil {
+				protocol = string(*rp.Protocol)
+			}
+
+			isFromInternet := srcAddr == "*" || strings.EqualFold(srcAddr, "Internet") || srcAddr == "0.0.0.0/0"
+
+			if isFromInternet && (dstPort == "*" || strings.EqualFold(protocol, "*")) {
+				findings = append(findings, NSGFinding{
+					Severity: Critical, Category: "Any-Any Allow Rule",
+					NSGName: name, ResourceGroup: rg, RuleName: ruleName,
+					Description:    fmt.Sprintf("Rule allows ALL inbound traffic from %s on port %s (protocol: %s)", srcAddr, dstPort, protocol),
+					Recommendation: "Restrict source addresses and destination ports to only what is needed.",
+				})
+				continue
+			}
+
+			if isFromInternet {
+				portStrs := collectPortStrings(rp.DestinationPortRange, rp.DestinationPortRanges)
+				openPorts := parsePortRangesFromStrings(portStrs)
+				for port, svcName := range dangerousPorts {
+					if portInRanges(port, openPorts) {
+						findings = append(findings, NSGFinding{
+							Severity: Critical, Category: "Management Port Open to Internet",
+							NSGName: name, ResourceGroup: rg, RuleName: ruleName,
+							Description:    fmt.Sprintf("Port %d (%s) is open to the internet (source: %s)", port, svcName, srcAddr),
+							Recommendation: fmt.Sprintf("Restrict %s (port %d) access to specific IP addresses or use a VPN/bastion.", svcName, port),
+						})
+					}
+				}
+			}
+
+			if isFromInternet && dstPort != "*" {
+				portStrs2 := collectPortStrings(rp.DestinationPortRange, rp.DestinationPortRanges)
+				openPorts := parsePortRangesFromStrings(portStrs2)
+				hasDangerousPort := false
+				for port := range dangerousPorts {
+					if portInRanges(port, openPorts) {
+						hasDangerousPort = true
+						break
+					}
+				}
+				if !hasDangerousPort {
+					findings = append(findings, NSGFinding{
+						Severity: Warning, Category: "Internet-Facing Rule",
+						NSGName: name, ResourceGroup: rg, RuleName: ruleName,
+						Description:    fmt.Sprintf("Rule allows inbound from internet on port(s) %s", dstPort),
+						Recommendation: "Review if internet access is required; restrict source IPs where possible.",
+					})
+				}
+			}
+		}
+	}
+	return findings
+}
+
 // ---------- provider registration ----------
 
 type nsgProviderAdapter struct{}

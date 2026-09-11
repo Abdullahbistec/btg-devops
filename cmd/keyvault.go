@@ -347,6 +347,109 @@ func computeKeyVaultFindings(ctx context.Context, cred *azidentity.DefaultAzureC
 	return report, nil
 }
 
+// AnalyzeKeyVaultFindings runs Key Vault checks on pre-fetched vaults — no Azure calls.
+// Skips key/secret expiry checks (require data-plane client).
+func AnalyzeKeyVaultFindings(vaults []*armkeyvault.Vault, _ time.Time) []KeyVaultFinding {
+	var findings []KeyVaultFinding
+	for _, vault := range vaults {
+		name := deref(vault.Name)
+		rg := extractResourceGroup(deref(vault.ID))
+		props := vault.Properties
+		if props == nil {
+			continue
+		}
+
+		if props.EnableRbacAuthorization == nil || !*props.EnableRbacAuthorization {
+			findings = append(findings, KeyVaultFinding{
+				Severity: Warning, Category: "Access Policies (Not RBAC)",
+				VaultName: name, ResourceGrp: rg,
+				Description:    "Vault uses legacy access policies instead of Azure RBAC",
+				Recommendation: "Migrate to Azure RBAC authorization model for finer-grained, centralized access control.",
+			})
+		}
+
+		if props.EnableSoftDelete != nil && !*props.EnableSoftDelete {
+			findings = append(findings, KeyVaultFinding{
+				Severity: Critical, Category: "Soft-Delete Disabled",
+				VaultName: name, ResourceGrp: rg,
+				Description:    "Soft-delete is disabled — deleted secrets/keys/certificates are permanently lost",
+				Recommendation: "Enable soft-delete (now mandatory for new vaults) to allow recovery of deleted items.",
+			})
+		}
+
+		if props.EnablePurgeProtection == nil || !*props.EnablePurgeProtection {
+			findings = append(findings, KeyVaultFinding{
+				Severity: Warning, Category: "No Purge Protection",
+				VaultName: name, ResourceGrp: rg,
+				Description:    "Purge protection is not enabled — soft-deleted items can be permanently purged before retention period",
+				Recommendation: "Enable purge protection to prevent permanent deletion of soft-deleted items.",
+			})
+		}
+
+		if props.PublicNetworkAccess == nil || strings.EqualFold(deref(props.PublicNetworkAccess), "enabled") {
+			hasRules := props.NetworkACLs != nil && props.NetworkACLs.DefaultAction != nil &&
+				*props.NetworkACLs.DefaultAction == armkeyvault.NetworkRuleActionDeny
+			if !hasRules {
+				findings = append(findings, KeyVaultFinding{
+					Severity: Warning, Category: "Unrestricted Network Access",
+					VaultName: name, ResourceGrp: rg,
+					Description:    "Public network access enabled with no firewall rules (default action: Allow)",
+					Recommendation: "Configure firewall rules or use private endpoints to restrict access.",
+				})
+			}
+		}
+
+		if props.AccessPolicies != nil {
+			for _, ap := range props.AccessPolicies {
+				if ap.Permissions == nil {
+					continue
+				}
+				for _, k := range ap.Permissions.Keys {
+					if k != nil && strings.EqualFold(string(*k), "all") {
+						findings = append(findings, KeyVaultFinding{
+							Severity: Warning, Category: "Overly Broad Key Permissions",
+							VaultName: name, ResourceGrp: rg,
+							Description:    fmt.Sprintf("Access policy grants 'All' key permissions to principal %s", deref(ap.ObjectID)),
+							Recommendation: "Follow least-privilege: grant only specific key permissions needed.",
+						})
+						break
+					}
+				}
+				for _, s := range ap.Permissions.Secrets {
+					if s != nil && strings.EqualFold(string(*s), "all") {
+						findings = append(findings, KeyVaultFinding{
+							Severity: Warning, Category: "Overly Broad Secret Permissions",
+							VaultName: name, ResourceGrp: rg,
+							Description:    fmt.Sprintf("Access policy grants 'All' secret permissions to principal %s", deref(ap.ObjectID)),
+							Recommendation: "Follow least-privilege: grant only specific secret permissions needed.",
+						})
+						break
+					}
+				}
+			}
+		}
+
+		if len(props.PrivateEndpointConnections) == 0 {
+			findings = append(findings, KeyVaultFinding{
+				Severity: Info, Category: "No Private Endpoints",
+				VaultName: name, ResourceGrp: rg,
+				Description:    "No private endpoint connections configured",
+				Recommendation: "Consider using private endpoints for secure access from virtual networks.",
+			})
+		}
+
+		if props.SoftDeleteRetentionInDays != nil && *props.SoftDeleteRetentionInDays < 90 {
+			findings = append(findings, KeyVaultFinding{
+				Severity: Info, Category: "Short Retention Period",
+				VaultName: name, ResourceGrp: rg,
+				Description:    fmt.Sprintf("Soft-delete retention is %d days (recommended: 90)", *props.SoftDeleteRetentionInDays),
+				Recommendation: "Increase soft-delete retention period to 90 days for better recovery options.",
+			})
+		}
+	}
+	return findings
+}
+
 // ---------- provider registration ----------
 
 type keyvaultProviderAdapter struct{}

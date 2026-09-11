@@ -154,6 +154,96 @@ func computeAppServicePlanFindings(ctx context.Context, cred *azidentity.Default
 	return report, nil
 }
 
+// AnalyzeASPsData runs ASP checks without metrics — no Azure calls.
+// Skips the over-provisioned CPU/memory check (requires Azure Monitor).
+func AnalyzeASPsData(plans []*armappservice.Plan, planAppCount map[string]int) ASPReport {
+	report := ASPReport{
+		Summary: ASPSummary{
+			TotalPlans:         len(plans),
+			FindingsBySeverity: map[string]int{},
+			BySKU:              map[string]int{},
+		},
+	}
+	for _, plan := range plans {
+		name := deref(plan.Name)
+		rg := ""
+		if plan.ID != nil {
+			rg = extractResourceGroup(*plan.ID)
+		}
+		skuName := ""
+		skuTier := ""
+		if plan.SKU != nil {
+			skuName = deref(plan.SKU.Name)
+			skuTier = deref(plan.SKU.Tier)
+		}
+		report.Summary.BySKU[skuName]++
+
+		appCount := 0
+		if plan.ID != nil {
+			appCount = planAppCount[strings.ToLower(*plan.ID)]
+		}
+		if appCount == 0 && plan.Properties != nil && plan.Properties.NumberOfSites != nil {
+			appCount = int(*plan.Properties.NumberOfSites)
+		}
+		if appCount == 0 {
+			report.Summary.EmptyPlans++
+			cost := skuMonthlyCostUSD[skuName]
+			workers := 1
+			if plan.SKU != nil && plan.SKU.Capacity != nil {
+				workers = int(*plan.SKU.Capacity)
+			}
+			waste := cost * float64(workers)
+			report.Summary.EstimatedWasteUSD += waste
+			sev := Critical
+			if strings.EqualFold(skuTier, "Free") || strings.EqualFold(skuTier, "Shared") {
+				sev = Info
+			}
+			desc := fmt.Sprintf("Plan '%s' (%s) has no apps deployed", name, skuName)
+			if waste > 0 {
+				desc += fmt.Sprintf(" — wasting ~$%.0f/mo", waste)
+			}
+			report.addASPFinding(ASPFinding{
+				Severity: sev, Category: "Empty Plan",
+				PlanName: name, ResourceGroup: rg, SKU: skuName,
+				Description:    desc,
+				Recommendation: "Delete the empty App Service Plan to stop incurring charges",
+			})
+		}
+
+		if (strings.HasPrefix(skuTier, "Premium") || strings.HasPrefix(skuTier, "Isolated")) && appCount > 0 && appCount <= 2 {
+			report.addASPFinding(ASPFinding{
+				Severity: Info, Category: "SKU Right-Sizing",
+				PlanName: name, ResourceGroup: rg, SKU: skuName,
+				Description:    fmt.Sprintf("Plan '%s' (%s tier) hosts only %d app(s) — may be over-specced", name, skuTier, appCount),
+				Recommendation: "Evaluate if a Standard tier plan would suffice for the workload",
+			})
+		}
+
+		if (strings.EqualFold(skuTier, "Free") || strings.EqualFold(skuTier, "Shared")) && appCount > 0 {
+			report.addASPFinding(ASPFinding{
+				Severity: Warning, Category: "No SLA",
+				PlanName: name, ResourceGroup: rg, SKU: skuName,
+				Description:    fmt.Sprintf("Plan '%s' uses %s tier with %d app(s) — no SLA guarantee", name, skuTier, appCount),
+				Recommendation: "Upgrade to Basic or Standard tier for production workloads with SLA",
+			})
+		}
+
+		workers := 1
+		if plan.SKU != nil && plan.SKU.Capacity != nil {
+			workers = int(*plan.SKU.Capacity)
+		}
+		if workers >= 4 {
+			report.addASPFinding(ASPFinding{
+				Severity: Info, Category: "Autoscale",
+				PlanName: name, ResourceGroup: rg, SKU: fmt.Sprintf("%s x%d", skuName, workers),
+				Description:    fmt.Sprintf("Plan '%s' has %d fixed workers — consider autoscale", name, workers),
+				Recommendation: "Enable autoscale to dynamically adjust capacity and reduce costs during low-traffic periods",
+			})
+		}
+	}
+	return report
+}
+
 // ---------- provider registration ----------
 
 type appServicePlanProviderAdapter struct{}

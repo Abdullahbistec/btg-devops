@@ -429,6 +429,155 @@ func computeCosmosDBFindings(ctx context.Context, cred *azidentity.DefaultAzureC
 	return report, nil
 }
 
+// AnalyzeCosmosDBFindings runs CosmosDB checks on pre-fetched data — no Azure calls.
+// Skips SQL throughput checks (require Azure client).
+func AnalyzeCosmosDBFindings(accounts []*armcosmos.DatabaseAccountGetResults) []CosmosDBFinding {
+	var findings []CosmosDBFinding
+	for _, acct := range accounts {
+		name := deref(acct.Name)
+		rg := extractResourceGroup(deref(acct.ID))
+		props := acct.Properties
+		if props == nil {
+			continue
+		}
+
+		if props.PublicNetworkAccess != nil && *props.PublicNetworkAccess == armcosmos.PublicNetworkAccessEnabled {
+			findings = append(findings, CosmosDBFinding{
+				Severity: Warning, Category: "Public Network Access",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "Public network access is enabled — account is accessible from the internet",
+				Recommendation: "Disable public network access and use private endpoints or IP firewall rules.",
+			})
+		}
+
+		if len(props.IPRules) == 0 {
+			if props.PublicNetworkAccess == nil || *props.PublicNetworkAccess == armcosmos.PublicNetworkAccessEnabled {
+				findings = append(findings, CosmosDBFinding{
+					Severity: Warning, Category: "No IP Firewall Rules",
+					AccountName: name, ResourceGroup: rg,
+					Description:    "No IP firewall rules configured — all public IPs can access the account",
+					Recommendation: "Configure IP firewall rules to restrict access to known IP ranges.",
+				})
+			}
+		}
+
+		if len(props.PrivateEndpointConnections) == 0 {
+			findings = append(findings, CosmosDBFinding{
+				Severity: Warning, Category: "No Private Endpoint",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "No private endpoint connections configured",
+				Recommendation: "Configure private endpoints to restrict access to your virtual network.",
+			})
+		}
+
+		if props.BackupPolicy != nil {
+			switch bp := props.BackupPolicy.(type) {
+			case *armcosmos.PeriodicModeBackupPolicy:
+				if bp.PeriodicModeProperties != nil {
+					interval := bp.PeriodicModeProperties.BackupIntervalInMinutes
+					retention := bp.PeriodicModeProperties.BackupRetentionIntervalInHours
+					if interval != nil && *interval > 240 {
+						findings = append(findings, CosmosDBFinding{
+							Severity: Warning, Category: "Infrequent Backups",
+							AccountName: name, ResourceGroup: rg,
+							Description:    fmt.Sprintf("Backup interval is %d minutes (>4 hours) — risk of data loss", *interval),
+							Recommendation: "Reduce backup interval or switch to continuous backup for point-in-time restore.",
+						})
+					}
+					if retention != nil && *retention < 24 {
+						findings = append(findings, CosmosDBFinding{
+							Severity: Warning, Category: "Short Backup Retention",
+							AccountName: name, ResourceGroup: rg,
+							Description:    fmt.Sprintf("Backup retention is only %d hours", *retention),
+							Recommendation: "Increase backup retention period or switch to continuous backup.",
+						})
+					}
+				}
+				findings = append(findings, CosmosDBFinding{
+					Severity: Info, Category: "Periodic Backup Mode",
+					AccountName: name, ResourceGroup: rg,
+					Description:    "Using periodic backup mode — no point-in-time restore capability",
+					Recommendation: "Consider switching to continuous backup for point-in-time restore (up to 30 days).",
+				})
+			}
+		}
+
+		if props.ConsistencyPolicy != nil && props.ConsistencyPolicy.DefaultConsistencyLevel != nil {
+			if *props.ConsistencyPolicy.DefaultConsistencyLevel == armcosmos.DefaultConsistencyLevelStrong {
+				findings = append(findings, CosmosDBFinding{
+					Severity: Info, Category: "Strong Consistency",
+					AccountName: name, ResourceGroup: rg,
+					Description:    "Using Strong consistency — highest RU cost and latency",
+					Recommendation: "Evaluate if Session or Bounded Staleness consistency would meet requirements at lower cost.",
+				})
+			}
+		}
+
+		if props.EnableMultipleWriteLocations != nil && !*props.EnableMultipleWriteLocations {
+			if len(props.Locations) > 1 {
+				findings = append(findings, CosmosDBFinding{
+					Severity: Info, Category: "Multi-Region Write Disabled",
+					AccountName: name, ResourceGroup: rg,
+					Description:    "Account has multiple regions but multi-region write is disabled",
+					Recommendation: "Enable multi-region writes for lower write latency and higher availability.",
+				})
+			}
+		}
+
+		if len(props.Locations) <= 1 {
+			findings = append(findings, CosmosDBFinding{
+				Severity: Info, Category: "Single Region",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "Account is deployed in a single region — no geo-redundancy",
+				Recommendation: "Add a secondary region for disaster recovery and high availability.",
+			})
+		}
+
+		if props.EnableAutomaticFailover != nil && !*props.EnableAutomaticFailover {
+			if len(props.Locations) > 1 {
+				findings = append(findings, CosmosDBFinding{
+					Severity: Warning, Category: "Automatic Failover Disabled",
+					AccountName: name, ResourceGroup: rg,
+					Description:    "Multi-region account without automatic failover — manual intervention needed during outages",
+					Recommendation: "Enable automatic failover for seamless region failover during outages.",
+				})
+			}
+		}
+
+		if props.Cors != nil {
+			for _, cors := range props.Cors {
+				if cors.AllowedOrigins != nil && *cors.AllowedOrigins == "*" {
+					findings = append(findings, CosmosDBFinding{
+						Severity: Warning, Category: "Wildcard CORS",
+						AccountName: name, ResourceGroup: rg,
+						Description:    "CORS allows all origins (*) — potential security risk",
+						Recommendation: "Restrict CORS allowed origins to specific, trusted domains.",
+					})
+				}
+			}
+		}
+
+		if props.DisableLocalAuth != nil && !*props.DisableLocalAuth {
+			findings = append(findings, CosmosDBFinding{
+				Severity: Info, Category: "Key-Based Auth Enabled",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "Key-based (primary/secondary key) authentication is enabled",
+				Recommendation: "Consider disabling key-based auth and using Azure AD RBAC for better security and auditability.",
+			})
+		}
+
+		if props.EnableAnalyticalStorage != nil && !*props.EnableAnalyticalStorage {
+			findings = append(findings, CosmosDBFinding{
+				Severity: Info, Category: "Analytical Store Disabled",
+				AccountName: name, ResourceGroup: rg,
+				Description:    "Analytical storage (Azure Synapse Link) is not enabled",
+				Recommendation: "Enable analytical storage if you need to run analytical queries without impacting transactional workloads.",
+			})
+		}
+	}
+	return findings
+}
+
 // ---------- provider registration ----------
 
 type cosmosdbProviderAdapter struct{}

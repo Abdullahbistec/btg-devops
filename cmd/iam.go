@@ -59,7 +59,10 @@ type CustomRole struct {
 
 // ---------- resolved assignment ----------
 
-type resolvedAssignment struct {
+type resolvedAssignment = ResolvedAssignment
+
+// ResolvedAssignment is an exported alias used for testing.
+type ResolvedAssignment struct {
 	AssignmentID  string
 	PrincipalID   string
 	PrincipalType string
@@ -548,6 +551,143 @@ func derefPT(pt *armauthorization.PrincipalType) armauthorization.PrincipalType 
 func lastSegment(s string) string {
 	parts := strings.Split(s, "/")
 	return parts[len(parts)-1]
+}
+
+// AnalyzeIAMFindings runs the IAM checks on pre-fetched data — no Azure calls.
+func AnalyzeIAMFindings(assignments []ResolvedAssignment, customRoles []CustomRole, _ string) []Finding {
+	var findings []Finding
+
+	subOwnerCount := 0
+	for _, a := range assignments {
+		if a.ScopeLevel != "subscription" {
+			continue
+		}
+		if a.RoleName == "Owner" || a.RoleName == "Contributor" {
+			sev := Warning
+			if a.RoleName == "Owner" {
+				sev = Critical
+				subOwnerCount++
+			}
+			findings = append(findings, Finding{
+				Severity:       sev,
+				Category:       "Overprivileged",
+				Description:    fmt.Sprintf("%s role assigned at subscription scope", a.RoleName),
+				Principal:      a.PrincipalID,
+				PrincipalType:  a.PrincipalType,
+				Role:           a.RoleName,
+				Scope:          a.Scope,
+				Recommendation: fmt.Sprintf("Reduce scope to resource group level or use PIM/JIT for %s access.", a.RoleName),
+			})
+		}
+		if (a.RoleName == "Owner" || a.RoleName == "Contributor") && a.PrincipalType == "ServicePrincipal" {
+			findings = append(findings, Finding{
+				Severity:       Critical,
+				Category:       "ServicePrincipal Overprivileged",
+				Description:    fmt.Sprintf("Service Principal has %s at subscription scope", a.RoleName),
+				Principal:      a.PrincipalID,
+				PrincipalType:  a.PrincipalType,
+				Role:           a.RoleName,
+				Scope:          a.Scope,
+				Recommendation: "Limit Service Principal roles to least-privilege at resource group scope.",
+			})
+		}
+	}
+
+	if subOwnerCount > 3 {
+		findings = append(findings, Finding{
+			Severity:       Critical,
+			Category:       "Too Many Owners",
+			Description:    fmt.Sprintf("%d Owner assignments at subscription scope (recommended max: 3)", subOwnerCount),
+			Recommendation: "Reduce the number of Owner assignments. Use Contributor or custom roles with JIT elevation.",
+		})
+	}
+
+	for _, a := range assignments {
+		if a.PrincipalType == "Unknown" || a.PrincipalType == "" {
+			findings = append(findings, Finding{
+				Severity:       Warning,
+				Category:       "Orphaned Assignment",
+				Description:    "Role assignment references a principal that no longer exists (deleted user/SP/group)",
+				Principal:      a.PrincipalID,
+				PrincipalType:  a.PrincipalType,
+				Role:           a.RoleName,
+				Scope:          a.Scope,
+				Recommendation: "Remove this orphaned role assignment.",
+			})
+		}
+	}
+
+	type dupKey struct {
+		PrincipalID string
+		RoleID      string
+		Scope       string
+	}
+	seen := map[dupKey]int{}
+	for _, a := range assignments {
+		k := dupKey{a.PrincipalID, a.RoleID, a.Scope}
+		seen[k]++
+	}
+	for k, count := range seen {
+		if count > 1 {
+			findings = append(findings, Finding{
+				Severity:       Warning,
+				Category:       "Duplicate Assignment",
+				Description:    fmt.Sprintf("Principal %s has %d identical role assignments at same scope", k.PrincipalID, count),
+				Principal:      k.PrincipalID,
+				Scope:          k.Scope,
+				Recommendation: "Remove duplicate role assignments.",
+			})
+		}
+	}
+
+	for _, a := range assignments {
+		if a.PrincipalType == "User" {
+			findings = append(findings, Finding{
+				Severity:       Info,
+				Category:       "Direct User Assignment",
+				Description:    "Role assigned directly to a user instead of a group",
+				Principal:      a.PrincipalID,
+				PrincipalType:  a.PrincipalType,
+				Role:           a.RoleName,
+				Scope:          a.Scope,
+				Recommendation: "Use Azure AD groups for role assignments to simplify management.",
+			})
+		}
+	}
+
+	classicRoles := map[string]bool{
+		"CoAdministrator":       true,
+		"Service Administrator": true,
+		"Account Administrator": true,
+	}
+	for _, a := range assignments {
+		if classicRoles[a.RoleName] {
+			findings = append(findings, Finding{
+				Severity:       Warning,
+				Category:       "Classic Admin Role",
+				Description:    fmt.Sprintf("Classic admin role '%s' still in use", a.RoleName),
+				Principal:      a.PrincipalID,
+				PrincipalType:  a.PrincipalType,
+				Role:           a.RoleName,
+				Scope:          a.Scope,
+				Recommendation: "Migrate from classic admin roles to Azure RBAC roles.",
+			})
+		}
+	}
+
+	for _, cr := range customRoles {
+		if cr.IsOverly {
+			findings = append(findings, Finding{
+				Severity:       Warning,
+				Category:       "Overly Broad Custom Role",
+				Description:    fmt.Sprintf("Custom role '%s' has wildcard (*) actions", cr.Name),
+				Role:           cr.Name,
+				Recommendation: "Restrict custom role permissions to specific actions needed.",
+			})
+		}
+	}
+
+	return findings
 }
 
 func classifyScope(scope, subScope string) string {

@@ -371,4 +371,82 @@ func printStorageTable(r StorageReport) {
 	fmt.Println()
 }
 
+// AnalyzeStorageFindings runs storage checks on pre-fetched accounts — no Azure calls.
+// Skips the lifecycle policy check (requires Azure client).
+func AnalyzeStorageFindings(accounts []*armstorage.Account) []StorageFinding {
+	var findings []StorageFinding
+	for _, acct := range accounts {
+		name := deref(acct.Name)
+		rg := extractResourceGroup(deref(acct.ID))
+		props := acct.Properties
+		if props == nil {
+			continue
+		}
+
+		if props.EnableHTTPSTrafficOnly != nil && !*props.EnableHTTPSTrafficOnly {
+			findings = append(findings, StorageFinding{
+				Severity: Critical, Category: "HTTPS Not Enforced",
+				StorageAccount: name, ResourceGroup: rg,
+				Description:    "Storage account allows non-HTTPS traffic",
+				Recommendation: "Enable 'Secure transfer required' to enforce HTTPS-only access.",
+			})
+		}
+
+		if props.AllowBlobPublicAccess != nil && *props.AllowBlobPublicAccess {
+			findings = append(findings, StorageFinding{
+				Severity: Critical, Category: "Blob Public Access Enabled",
+				StorageAccount: name, ResourceGroup: rg,
+				Description:    "Account-level blob public access is enabled — containers can be made publicly accessible",
+				Recommendation: "Disable 'Allow Blob public access' unless explicitly required.",
+			})
+		}
+
+		if props.MinimumTLSVersion != nil {
+			tlsVer := string(*props.MinimumTLSVersion)
+			if tlsVer != string(armstorage.MinimumTLSVersionTLS12) {
+				sev := Warning
+				if tlsVer == string(armstorage.MinimumTLSVersionTLS10) {
+					sev = Critical
+				}
+				findings = append(findings, StorageFinding{
+					Severity: sev, Category: "Weak TLS Version",
+					StorageAccount: name, ResourceGroup: rg,
+					Description:    fmt.Sprintf("Minimum TLS version is %s (should be TLS 1.2)", tlsVer),
+					Recommendation: "Set minimum TLS version to TLS 1.2.",
+				})
+			}
+		}
+
+		if props.PublicNetworkAccess != nil && *props.PublicNetworkAccess == armstorage.PublicNetworkAccessEnabled {
+			if props.NetworkRuleSet == nil || (props.NetworkRuleSet.DefaultAction != nil && *props.NetworkRuleSet.DefaultAction == armstorage.DefaultActionAllow) {
+				findings = append(findings, StorageFinding{
+					Severity: Warning, Category: "Unrestricted Network Access",
+					StorageAccount: name, ResourceGroup: rg,
+					Description:    "Public network access enabled with no firewall rules (default action: Allow)",
+					Recommendation: "Configure firewall rules or use private endpoints to restrict access.",
+				})
+			}
+		}
+
+		if props.AllowSharedKeyAccess == nil || *props.AllowSharedKeyAccess {
+			findings = append(findings, StorageFinding{
+				Severity: Info, Category: "Shared Key Access Enabled",
+				StorageAccount: name, ResourceGroup: rg,
+				Description:    "Shared key (storage account key) access is enabled",
+				Recommendation: "Consider disabling shared key access and using Azure AD authentication instead.",
+			})
+		}
+
+		if props.Encryption != nil && (props.Encryption.RequireInfrastructureEncryption == nil || !*props.Encryption.RequireInfrastructureEncryption) {
+			findings = append(findings, StorageFinding{
+				Severity: Info, Category: "No Infrastructure Encryption",
+				StorageAccount: name, ResourceGroup: rg,
+				Description:    "Infrastructure (double) encryption is not enabled",
+				Recommendation: "Enable infrastructure encryption for an additional layer of encryption at rest.",
+			})
+		}
+	}
+	return findings
+}
+
 // extractResourceGroup and getSubscriptionID are defined in appservice_traffic.go
