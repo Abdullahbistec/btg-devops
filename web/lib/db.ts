@@ -211,6 +211,8 @@ async function initSchema(pool: Pool): Promise<void> {
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS location           TEXT DEFAULT '';
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS monthly_cost       DOUBLE PRECISION DEFAULT NULL;
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS monthly_saving     DOUBLE PRECISION DEFAULT NULL;
+    ALTER TABLE findings ADD COLUMN IF NOT EXISTS confidence         DOUBLE PRECISION DEFAULT NULL;
+    ALTER TABLE findings ADD COLUMN IF NOT EXISTS reasoning          TEXT DEFAULT NULL;
 
     ALTER TABLE audits ADD COLUMN IF NOT EXISTS resources_scanned INTEGER DEFAULT 0;
     ALTER TABLE audits ADD COLUMN IF NOT EXISTS current_step      TEXT DEFAULT '';

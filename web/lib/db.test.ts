@@ -157,3 +157,18 @@ describe('saveCostSnapshot — history', () => {
     expect(Number(threeDays[0].total_cost)).toBe(120);
   });
 });
+
+describe('findings table migrations', () => {
+  beforeEach(async () => {
+    await assertTestDatabase();
+  });
+
+  it('findings table has confidence and reasoning columns after migration', async () => {
+    const db = await getDB();
+    const { rows } = await db.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'findings' AND column_name IN ('confidence', 'reasoning')`
+    );
+    const names = rows.map((r: { column_name: string }) => r.column_name).sort();
+    expect(names).toEqual(['confidence', 'reasoning']);
+  });
+});
