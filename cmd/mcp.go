@@ -267,6 +267,9 @@ func submitFindingsHandler(ctx context.Context, request mcp.CallToolRequest) (*m
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	if err := validateRequestID(requestID); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 	findingsJSON, err := request.RequireString("findings_json")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil

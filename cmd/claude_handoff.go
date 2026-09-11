@@ -65,3 +65,15 @@ func writeHandoffResult(resultPath string, findings []HandoffFinding) error {
 	}
 	return os.WriteFile(resultPath, data, 0600)
 }
+
+// validateRequestID ensures the request_id is a well-formed UUID, preventing
+// path traversal attacks where a compromised/hallucinating claude process or
+// malicious MCP client might pass path-traversal sequences like "../../../etc/passwd"
+// into HandoffResultPath's filepath.Join.
+func validateRequestID(requestID string) error {
+	_, err := uuid.Parse(requestID)
+	if err != nil {
+		return fmt.Errorf("request_id must be a valid UUID, got %q: %w", requestID, err)
+	}
+	return nil
+}

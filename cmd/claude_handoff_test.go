@@ -52,3 +52,28 @@ func writeHandoffFile(t *testing.T, path, content string) {
 		t.Fatalf("failed to write test handoff file: %v", err)
 	}
 }
+
+func TestValidateRequestID_RejectsPathTraversal(t *testing.T) {
+	tests := []string{
+		"../../etc/passwd",
+		"../../../sensitive",
+		"..\\..\\windows\\system32",
+		"..",
+		"....",
+		"/etc/passwd",
+		"~/.ssh/id_rsa",
+	}
+	for _, requestID := range tests {
+		if err := validateRequestID(requestID); err == nil {
+			t.Errorf("validateRequestID(%q) should reject path-traversal attempt, got no error", requestID)
+		}
+	}
+}
+
+func TestValidateRequestID_AcceptsValidUUID(t *testing.T) {
+	// uuid.NewString() generates valid UUIDs like "550e8400-e29b-41d4-a716-446655440000"
+	id, _ := NewHandoffRequest()
+	if err := validateRequestID(id); err != nil {
+		t.Errorf("validateRequestID should accept valid UUID %q, got error: %v", id, err)
+	}
+}
