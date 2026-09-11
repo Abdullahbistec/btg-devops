@@ -32,6 +32,12 @@ type StorageSummary struct {
 	FindingsBySeverity map[string]int `json:"findings_by_severity"`
 	ByKind             map[string]int `json:"by_kind"`
 	ByReplication      map[string]int `json:"by_replication"`
+	// Engine records which analysis engine actually produced this report —
+	// "claude" (handoffFindingsToStorageReport) or "rules"
+	// (analyzeStorageAccounts) — so a silent fallback to rule-based analysis
+	// (e.g. the Claude spawn/MCP path failing) is observable in the output
+	// itself, not just in stderr logs.
+	Engine string `json:"engine"`
 }
 
 type StorageReport struct {
@@ -137,6 +143,7 @@ func analyzeStorageAccounts(accounts []*armstorage.Account, mgmtPolicyClient *ar
 		FindingsBySeverity: map[string]int{},
 		ByKind:             map[string]int{},
 		ByReplication:      map[string]int{},
+		Engine:             "rules",
 	}
 	var findings []StorageFinding
 

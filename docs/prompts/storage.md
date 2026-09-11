@@ -41,6 +41,8 @@ why you flagged it.
 
 When you are done, call `submit_findings` exactly once with the `request_id`
 given to you and a `findings_json` array, each finding shaped as:
-`{"service":"storage","resource":"<storage account name>","severity":"Critical|Warning|Info","category":"...","description":"...","recommendation":"...","confidence":0.0-1.0,"reasoning":"..."}`.
-If you find nothing, call `submit_findings` with an empty array — do not
-skip calling it.
+`{"service":"storage","resource":"<storage account name>","resource_group":"<the account's resource group>","severity":"Critical|Warning|Info","category":"...","description":"...","recommendation":"...","confidence":0.0-1.0,"reasoning":"..."}`.
+Set `resource_group` from the account's own `id` field (the segment after
+`/resourceGroups/` in its ARM resource ID) — every account in the raw data
+has one. If you find nothing, call `submit_findings` with an empty array —
+do not skip calling it.
