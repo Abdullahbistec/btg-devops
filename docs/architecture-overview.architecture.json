@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "BTG DevOps Overview",
+    "output": "architecture-overview.html",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "scan-path", "label": "Scheduled scan to dashboard", "focus": ["scheduler", "cli", "targets", "database", "dashboard", "users"], "note": "A cron trigger scans every connected cloud, stores findings, and the dashboard renders them for admins and viewers." },
+      { "id": "ai-layer", "label": "AI judgment layer", "focus": ["cli", "ai", "dashboard", "database"], "note": "Claude judges individual findings and summarizes full audits, always with an automatic rule-based fallback." }
+    ]
+  },
+  "components": [
+    { "id": "scheduler", "type": "cloud", "label": "Scheduled Trigger", "sublabel": "cron, 4x/day", "pos": [40, 90], "size": [150, 64] },
+    { "id": "cli", "type": "backend", "label": "btg-devops CLI", "sublabel": "Go analyzer engine", "pos": [290, 90], "size": [160, 64], "tag": "19 analyzers" },
+    { "id": "targets", "type": "external", "label": "Cloud Subscriptions", "sublabel": "Azure, Power Platform, Hetzner", "pos": [550, 90], "size": [170, 64] },
+    { "id": "database", "type": "database", "label": "PostgreSQL", "sublabel": "findings & schedules", "pos": [290, 280], "size": [160, 64] },
+    { "id": "dashboard", "type": "frontend", "label": "Web Dashboard", "sublabel": "Next.js", "pos": [550, 280], "size": [160, 64] },
+    { "id": "users", "type": "external", "label": "Admins & Viewers", "sublabel": "role-gated browser", "pos": [800, 280], "size": [150, 64] },
+    { "id": "ai", "type": "external", "label": "Claude AI Layer", "sublabel": "per-finding judgment + summaries", "pos": [550, 460], "size": [170, 64], "tag": "auto rule fallback" },
+    { "id": "notify", "type": "external", "label": "Email Notifications", "sublabel": "audit summaries", "pos": [800, 460], "size": [150, 64] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Cloud environments under audit — read-only access only", "wraps": ["targets"] },
+    { "kind": "security-group", "label": "Trusted backend — holds credentials, never exposed to browsers", "wraps": ["cli", "database"] }
+  ],
+  "connections": [
+    { "id": "scheduler-to-cli", "from": "scheduler", "to": "cli", "label": "trigger scan", "variant": "emphasis" },
+    { "id": "cli-to-targets", "from": "cli", "to": "targets", "label": "read-only scan", "variant": "emphasis" },
+    { "id": "cli-to-db", "from": "cli", "to": "database", "label": "store findings", "variant": "emphasis", "labelDy": 24 },
+    { "id": "db-to-dashboard", "from": "database", "to": "dashboard", "label": "serve findings", "variant": "emphasis" },
+    { "id": "dashboard-to-users", "from": "dashboard", "to": "users", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "dashboard-to-ai", "from": "dashboard", "to": "ai", "label": "request judgment / summary", "variant": "dashed", "fromSide": "bottom", "toSide": "top" },
+    { "id": "ai-to-db", "from": "ai", "to": "database", "label": "write results", "variant": "dashed", "fromSide": "left", "toSide": "bottom", "via": [[460, 492], [370, 492]] },
+    { "id": "dashboard-to-notify", "from": "dashboard", "to": "notify", "label": "email on completion", "variant": "dashed", "fromSide": "right", "toSide": "top" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "What it does", "items": ["Scans Azure, Power Platform, and Hetzner for security, cost, and governance issues", "Every finding gets a severity (Critical/Warning/Info) and a recommendation"] },
+    { "dot": "emerald", "title": "Trust model", "items": ["Read-only credentials; the CLI never modifies a scanned resource", "Claude's judgment always has an automatic, deterministic rule-based fallback"] }
+  ]
+}
