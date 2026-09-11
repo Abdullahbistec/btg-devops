@@ -367,3 +367,28 @@ func nowMinusDays(d int) string {
 func nowPlusDays(d int) string {
 	return time.Now().AddDate(0, 0, d).UTC().Format("2006-01-02T15:04:05Z07:00")
 }
+
+// ---------- server cost tests ----------
+
+func TestHetznerServerMonthlyCost_UsesTypeAndLocation(t *testing.T) {
+	p := loadPricingFixture(t)
+	s := hetznerServer{
+		Name:       "web-1",
+		ServerType: hetznerServerType{Name: "cpx11"},
+		Datacenter: hetznerDatacenter{Location: hetznerLocation{Name: "fsn1"}},
+	}
+
+	cost, ok := hetznerServerMonthlyCost(s, p)
+	if !ok || cost <= 0 {
+		t.Errorf("got (%v, %v), want a positive price", cost, ok)
+	}
+}
+
+func TestHetznerServerMonthlyCost_UnknownTypeReportsMiss(t *testing.T) {
+	p := loadPricingFixture(t)
+	s := hetznerServer{Name: "x", ServerType: hetznerServerType{Name: "made-up"}}
+
+	if _, ok := hetznerServerMonthlyCost(s, p); ok {
+		t.Error("reported found for an unknown server type, want miss")
+	}
+}
