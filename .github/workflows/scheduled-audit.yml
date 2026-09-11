@@ -20,6 +20,7 @@ jobs:
       HAS_AZURE_CREDS: ${{ secrets.AZURE_TENANT_ID != '' }}
       HAS_PP_CREDS: ${{ secrets.AZURE_TENANT_ID != '' || secrets.BTG_PP_TENANT_ID != '' }}
       HAS_HETZNER_TOKEN: ${{ secrets.HCLOUD_TOKEN != '' }}
+      HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +32,24 @@ jobs:
       - name: Build CLI
         run: go build -o btg-devops .
 
+      - name: Install Claude Code CLI
+        if: ${{ env.HAS_ANTHROPIC_KEY == 'true' }}
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Start MCP server
+        if: ${{ env.HAS_ANTHROPIC_KEY == 'true' }}
+        env:
+          MCP_BEARER_TOKEN: ${{ secrets.MCP_BEARER_TOKEN }}
+        run: |
+          ./btg-devops mcp --http --addr :8090 &
+          sleep 2
+
+      # If ANTHROPIC_API_KEY isn't set (HAS_ANTHROPIC_KEY false), the Claude
+      # CLI/MCP steps above are skipped entirely and every service's
+      # analysis call fails to spawn claude at all — which is exactly the
+      # "spawn error" fallback path (see cmd/storage.go's runStorageAnalysis),
+      # so the audit still completes fully rule-based, matching today's
+      # behavior with zero configuration required.
       - name: Run Azure analyzers
         if: ${{ env.HAS_AZURE_CREDS == 'true' }}
         env:
@@ -38,6 +57,7 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: ./btg-devops analyze all --scope azure --output json > azure-findings.json
         continue-on-error: true
 
