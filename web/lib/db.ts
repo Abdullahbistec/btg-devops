@@ -211,6 +211,8 @@ async function initSchema(pool: Pool): Promise<void> {
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS location           TEXT DEFAULT '';
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS monthly_cost       DOUBLE PRECISION DEFAULT NULL;
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS monthly_saving     DOUBLE PRECISION DEFAULT NULL;
+    ALTER TABLE findings ADD COLUMN IF NOT EXISTS confidence         DOUBLE PRECISION DEFAULT NULL;
+    ALTER TABLE findings ADD COLUMN IF NOT EXISTS reasoning          TEXT DEFAULT NULL;
 
     ALTER TABLE audits ADD COLUMN IF NOT EXISTS resources_scanned INTEGER DEFAULT 0;
     ALTER TABLE audits ADD COLUMN IF NOT EXISTS current_step      TEXT DEFAULT '';
@@ -409,6 +411,8 @@ export interface Finding {
   location: string;
   monthly_cost: number | null;
   monthly_saving: number | null;
+  confidence: number | null;
+  reasoning: string | null;
   created_at: string;
 }
 
@@ -420,9 +424,9 @@ export async function insertFindings(auditId: string, findings: Omit<Finding, 'i
     await client.query('BEGIN');
     for (const f of findings) {
       await client.query(
-        `INSERT INTO findings (id, audit_id, service, resource, environment, severity, category, description, recommendation, owner, location, monthly_cost, monthly_saving)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-        [uuidv4(), auditId, f.service, f.resource, f.environment, f.severity, f.category, f.description, f.recommendation, f.owner || '', f.location || '', f.monthly_cost ?? null, f.monthly_saving ?? null]
+        `INSERT INTO findings (id, audit_id, service, resource, environment, severity, category, description, recommendation, owner, location, monthly_cost, monthly_saving, confidence, reasoning)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+        [uuidv4(), auditId, f.service, f.resource, f.environment, f.severity, f.category, f.description, f.recommendation, f.owner || '', f.location || '', f.monthly_cost ?? null, f.monthly_saving ?? null, f.confidence ?? null, f.reasoning || null]
       );
     }
     await client.query('COMMIT');

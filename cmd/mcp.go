@@ -132,6 +132,7 @@ func runMCP(cmd *cobra.Command, args []string) error {
 	s.AddTool(buildListPendingRequestsTool(), listPendingRequestsHandler)
 	s.AddTool(buildGetAuditDataTool(), getAuditDataHandler)
 	s.AddTool(buildSaveAnalysisTool(), saveAnalysisHandler)
+	s.AddTool(buildSubmitFindingsTool(), submitFindingsHandler)
 	s.AddTool(buildListPendingCostRequestsTool(), listPendingCostRequestsHandler)
 	s.AddTool(buildFetchCostDataTool(), fetchCostDataHandler)
 
@@ -244,6 +245,54 @@ func saveAnalysisHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp
 		return mcp.NewToolResultErrorFromErr("save_analysis failed", err), nil
 	}
 	return mcp.NewToolResultText(string(body)), nil
+}
+
+func buildSubmitFindingsTool() mcp.Tool {
+	return mcp.NewTool("submit_findings",
+		mcp.WithDescription("Submit the findings you determined for one service's raw resource data, keyed by the request_id you were given in your prompt. Call exactly once, with a JSON array of findings matching the required shape — even an empty array [] if you found nothing."),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("request_id",
+			mcp.Description("The request_id given to you in your prompt"),
+			mcp.Required(),
+		),
+		mcp.WithString("findings_json",
+			mcp.Description(`JSON array of findings, each: {"service","resource","resource_group" (optional),"severity" (Critical|Warning|Info),"category","description","recommendation","confidence" (0-1 number),"reasoning","fields" (optional map of extra service-specific identifying data)}`),
+			mcp.Required(),
+		),
+	)
+}
+
+func submitFindingsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	requestID, err := request.RequireString("request_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if err := validateRequestID(requestID); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	findingsJSON, err := request.RequireString("findings_json")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	var findings []HandoffFinding
+	if err := json.Unmarshal([]byte(findingsJSON), &findings); err != nil {
+		return mcp.NewToolResultErrorFromErr("findings_json was not valid JSON matching the required shape", err), nil
+	}
+	for i, f := range findings {
+		if f.Severity != "Critical" && f.Severity != "Warning" && f.Severity != "Info" {
+			return mcp.NewToolResultError(fmt.Sprintf("finding %d: severity must be Critical, Warning, or Info, got %q", i, f.Severity)), nil
+		}
+		if f.Confidence < 0 || f.Confidence > 1 {
+			return mcp.NewToolResultError(fmt.Sprintf("finding %d: confidence must be between 0 and 1, got %v", i, f.Confidence)), nil
+		}
+	}
+
+	resultPath := HandoffResultPath(requestID)
+	if err := writeHandoffResult(resultPath, findings); err != nil {
+		return mcp.NewToolResultErrorFromErr("submit_findings failed to write handoff result", err), nil
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Recorded %d finding(s) for request_id %s", len(findings), requestID)), nil
 }
 
 // ---------- async Cost Management refresh tools (--http mode only) ----------

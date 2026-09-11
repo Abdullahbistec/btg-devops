@@ -50,6 +50,8 @@ describe('insertFindings — location and cost columns', () => {
       location: 'eastus',
       monthly_cost: 12.5,
       monthly_saving: 12.5,
+      confidence: null,
+      reasoning: null,
     }]);
 
     const db = await getDB();
@@ -73,6 +75,8 @@ describe('insertFindings — location and cost columns', () => {
       location: '',
       monthly_cost: null,
       monthly_saving: null,
+      confidence: null,
+      reasoning: null,
     }]);
 
     const db = await getDB();
@@ -81,6 +85,54 @@ describe('insertFindings — location and cost columns', () => {
     expect(row.location).toBe('');
     expect(row.monthly_cost).toBeNull();
     expect(row.monthly_saving).toBeNull();
+  });
+
+  it('round-trips confidence and reasoning from the Claude-based analysis engine', async () => {
+    await insertFindings('audit-1', [{
+      service: 'Storage',
+      resource: 'acct1',
+      environment: '',
+      severity: 'Critical',
+      category: 'HTTPS Not Enforced',
+      description: 'desc',
+      recommendation: 'rec',
+      owner: '',
+      location: '',
+      monthly_cost: null,
+      monthly_saving: null,
+      confidence: 0.87,
+      reasoning: 'the account explicitly disables HTTPS-only traffic',
+    }]);
+
+    const db = await getDB();
+    const { rows } = await db.query('SELECT * FROM findings');
+    const row = rows[0];
+    expect(Number(row.confidence)).toBe(0.87);
+    expect(row.reasoning).toBe('the account explicitly disables HTTPS-only traffic');
+  });
+
+  it('defaults confidence and reasoning to null when absent (the rule-based fallback path)', async () => {
+    await insertFindings('audit-1', [{
+      service: 'IAM',
+      resource: 'some-role',
+      environment: '',
+      severity: 'Warning',
+      category: 'Overprivileged',
+      description: 'desc',
+      recommendation: 'rec',
+      owner: '',
+      location: '',
+      monthly_cost: null,
+      monthly_saving: null,
+      confidence: null,
+      reasoning: null,
+    }]);
+
+    const db = await getDB();
+    const { rows } = await db.query('SELECT * FROM findings');
+    const row = rows[0];
+    expect(row.confidence).toBeNull();
+    expect(row.reasoning).toBeNull();
   });
 });
 
@@ -155,5 +207,20 @@ describe('saveCostSnapshot — history', () => {
     const threeDays = await getCostSnapshotHistory('sub-1', 3);
     expect(threeDays).toHaveLength(1);
     expect(Number(threeDays[0].total_cost)).toBe(120);
+  });
+});
+
+describe('findings table migrations', () => {
+  beforeEach(async () => {
+    await assertTestDatabase();
+  });
+
+  it('findings table has confidence and reasoning columns after migration', async () => {
+    const db = await getDB();
+    const { rows } = await db.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'findings' AND column_name IN ('confidence', 'reasoning')`
+    );
+    const names = rows.map((r: { column_name: string }) => r.column_name).sort();
+    expect(names).toEqual(['confidence', 'reasoning']);
   });
 });

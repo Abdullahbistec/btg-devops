@@ -15,13 +15,15 @@ import (
 // ---------- data types ----------
 
 type UnifiedFinding struct {
-	Severity       string `json:"severity"`
-	Category       string `json:"category"`
-	Service        string `json:"service"`
-	Resource       string `json:"resource"`
-	Environment    string `json:"environment,omitempty"`
-	Description    string `json:"description"`
-	Recommendation string `json:"recommendation"`
+	Severity       string  `json:"severity"`
+	Category       string  `json:"category"`
+	Service        string  `json:"service"`
+	Resource       string  `json:"resource"`
+	Environment    string  `json:"environment,omitempty"`
+	Description    string  `json:"description"`
+	Recommendation string  `json:"recommendation"`
+	Confidence     float64 `json:"confidence,omitempty"`
+	Reasoning      string  `json:"reasoning,omitempty"`
 }
 
 type AllSummary struct {
@@ -114,6 +116,17 @@ func init() {
 	analyzeAllCmd.Flags().BoolVar(&flagAllFail, "fail-on-critical", false, "Exit code 1 if any Critical findings exist")
 }
 
+// subprocessArgs builds the argv for one re-exec'd analyzer subprocess.
+// Extracted as its own function (rather than inlined at the exec.Command
+// call site) so --engine forwarding can be unit-tested without actually
+// spawning a subprocess: cmd/root.go declares --engine as a root persistent
+// flag, but each `analyze <name>` subprocess analyze_all.go spawns is a
+// brand-new process that never sees the parent's flag value unless it's
+// forwarded explicitly here.
+func subprocessArgs(name string) []string {
+	return []string{"analyze", name, "--output", "json", "--engine", flagEngine}
+}
+
 func runAnalyzeAll(cmd *cobra.Command, args []string) error {
 	binary, err := os.Executable()
 	if err != nil {
@@ -142,7 +155,7 @@ func runAnalyzeAll(cmd *cobra.Command, args []string) error {
 
 	for _, name := range commands {
 		fmt.Fprintf(os.Stderr, "  ▶ analyze %s\n", name)
-		out, runErr := exec.Command(binary, "analyze", name, "--output", "json").Output()
+		out, runErr := exec.Command(binary, subprocessArgs(name)...).Output()
 		if runErr != nil {
 			msg := fmt.Sprintf("analyze %s: %v", name, runErr)
 			fmt.Fprintf(os.Stderr, "    ✗ %s\n", msg)
@@ -218,6 +231,8 @@ func extractFindings(cmdName string, raw []byte) []UnifiedFinding {
 			Description:    strField(f, "description"),
 			Recommendation: strField(f, "recommendation"),
 			Environment:    strField(f, "environment"),
+			Confidence:     numField(f, "confidence"),
+			Reasoning:      strField(f, "reasoning"),
 		}
 		for _, field := range resourceFields {
 			if v := strField(f, field); v != "" {
@@ -237,6 +252,18 @@ func strField(m map[string]interface{}, key string) string {
 		}
 	}
 	return ""
+}
+
+// numField reads a numeric field out of a decoded-JSON finding map.
+// encoding/json decodes all JSON numbers into interface{} as float64, so
+// that's the only concrete type this needs to handle.
+func numField(m map[string]interface{}, key string) float64 {
+	if v, ok := m[key]; ok {
+		if n, ok := v.(float64); ok {
+			return n
+		}
+	}
+	return 0
 }
 
 func printAllTable(r AllReport) {

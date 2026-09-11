@@ -20,6 +20,14 @@ jobs:
       HAS_AZURE_CREDS: ${{ secrets.AZURE_TENANT_ID != '' }}
       HAS_PP_CREDS: ${{ secrets.AZURE_TENANT_ID != '' || secrets.BTG_PP_TENANT_ID != '' }}
       HAS_HETZNER_TOKEN: ${{ secrets.HCLOUD_TOKEN != '' }}
+      # Both secrets are required for the Claude-based engine to actually
+      # work: ANTHROPIC_API_KEY for the `claude -p` CLI, MCP_BEARER_TOKEN for
+      # the MCP server runMCP() (cmd/mcp.go) refuses to start without. Gating
+      # on ANTHROPIC_API_KEY alone let CI install the Claude CLI and attempt
+      # to start a server that immediately failed for lack of a bearer token
+      # — silently, since the server was backgrounded and the step never
+      # checked whether it actually came up.
+      HAS_CLAUDE_ENGINE: ${{ secrets.ANTHROPIC_API_KEY != '' && secrets.MCP_BEARER_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +39,34 @@ jobs:
       - name: Build CLI
         run: go build -o btg-devops .
 
+      - name: Install Claude Code CLI
+        if: ${{ env.HAS_CLAUDE_ENGINE == 'true' }}
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Start MCP server
+        if: ${{ env.HAS_CLAUDE_ENGINE == 'true' }}
+        env:
+          MCP_BEARER_TOKEN: ${{ secrets.MCP_BEARER_TOKEN }}
+        run: |
+          ./btg-devops mcp --http --addr :8090 &
+          curl --fail --silent --show-error --retry 5 --retry-delay 1 \
+            http://localhost:8090/mcp \
+            -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -X POST \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci-healthcheck","version":"1.0"}}}' \
+            || (echo "::error::MCP server failed to start" && exit 1)
+
+      # If either secret is missing (HAS_CLAUDE_ENGINE false), the Claude
+      # CLI/MCP steps above are skipped entirely and every service's
+      # analysis call fails to spawn claude at all — which is exactly the
+      # "spawn error" fallback path (see cmd/storage.go's runStorageAnalysis),
+      # so the audit still completes fully rule-based, matching today's
+      # behavior with zero configuration required. If both secrets ARE set
+      # but the server still fails to come up, the health check above fails
+      # this step loudly instead of letting the job go green while silently
+      # running 100% rule-based.
       - name: Run Azure analyzers
         if: ${{ env.HAS_AZURE_CREDS == 'true' }}
         env:
@@ -38,6 +74,7 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: ./btg-devops analyze all --scope azure --output json > azure-findings.json
         continue-on-error: true
 
