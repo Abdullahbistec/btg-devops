@@ -256,7 +256,7 @@ func buildSubmitFindingsTool() mcp.Tool {
 			mcp.Required(),
 		),
 		mcp.WithString("findings_json",
-			mcp.Description(`JSON array of findings, each: {"service","resource","severity" (Critical|Warning|Info),"category","description","recommendation","confidence" (0-1 number),"reasoning"}`),
+			mcp.Description(`JSON array of findings, each: {"service","resource","resource_group" (optional),"severity" (Critical|Warning|Info),"category","description","recommendation","confidence" (0-1 number),"reasoning","fields" (optional map of extra service-specific identifying data)}`),
 			mcp.Required(),
 		),
 	)

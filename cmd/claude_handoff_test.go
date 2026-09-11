@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -67,6 +68,45 @@ func TestValidateRequestID_RejectsPathTraversal(t *testing.T) {
 		if err := validateRequestID(requestID); err == nil {
 			t.Errorf("validateRequestID(%q) should reject path-traversal attempt, got no error", requestID)
 		}
+	}
+}
+
+// TestWriteHandoffResult_WritesAtomicallyNoTempFileLeftBehind guards against
+// a torn read: writeHandoffResult must write to a sibling ".tmp" file and
+// rename it into place (atomic within a directory on both Linux and
+// Windows) rather than writing resultPath directly, so a concurrent
+// WaitForHandoff poll never observes a partial file. A successful write
+// should leave no ".tmp" file behind.
+func TestWriteHandoffResult_WritesAtomicallyNoTempFileLeftBehind(t *testing.T) {
+	_, path := NewHandoffRequest()
+	defer os.Remove(path)
+	tmpPath := path + ".tmp"
+	defer os.Remove(tmpPath)
+
+	findings := []HandoffFinding{
+		{Service: "storage", Resource: "acct1", Severity: "Warning", Category: "c", Description: "d", Recommendation: "r"},
+	}
+	if err := writeHandoffResult(path, findings); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected final handoff file to exist, got %v", err)
+	}
+	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
+		t.Errorf("expected no leftover .tmp file after a successful write, got err=%v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading final file: %v", err)
+	}
+	var got []HandoffFinding
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("final file was not valid JSON: %v", err)
+	}
+	if len(got) != 1 || got[0].Resource != "acct1" {
+		t.Fatalf("expected the written finding to round-trip, got %+v", got)
 	}
 }
 
