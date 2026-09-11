@@ -5,7 +5,7 @@
  * (add vitest to devDependencies first: npm i -D vitest)
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getPPCredentials, PP_SERVICE_LABELS, extractLocation, extractMonthlyCost, extractMonthlySaving } from './btg-runner';
+import { getPPCredentials, PP_SERVICE_LABELS, extractLocation, extractMonthlyCost, extractMonthlySaving, extractConfidence } from './btg-runner';
 
 const BASE = {
   tenantId: 'base-tenant',
@@ -108,5 +108,14 @@ describe('extractMonthlySaving', () => {
   });
   it('returns null when absent', () => {
     expect(extractMonthlySaving({} as any)).toBeNull();
+  });
+});
+
+describe('extractConfidence', () => {
+  it('returns the confidence field when present (Claude-based analysis engine findings)', () => {
+    expect(extractConfidence({ confidence: 0.72 } as any)).toBe(0.72);
+  });
+  it('returns null when absent (the rule-based fallback path never sets it)', () => {
+    expect(extractConfidence({} as any)).toBeNull();
   });
 });

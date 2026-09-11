@@ -79,6 +79,8 @@ export interface NormalizedFinding {
   location: string;
   monthly_cost: number | null;
   monthly_saving: number | null;
+  confidence: number | null;
+  reasoning: string;
 }
 
 interface RawFinding {
@@ -90,6 +92,11 @@ interface RawFinding {
   location?: string;
   monthly_cost?: number;
   monthly_saving?: number;
+  // Set only on findings produced by the Claude-based analysis engine
+  // (cmd/storage_claude.go's handoffFindingsToStorageReport and friends) —
+  // absent/zero-value on the Go rule-check fallback path.
+  confidence?: number;
+  reasoning?: string;
   // Azure fields
   account_name?: string;
   resource_name?: string;
@@ -149,6 +156,10 @@ export function extractMonthlyCost(raw: RawFinding): number | null {
 
 export function extractMonthlySaving(raw: RawFinding): number | null {
   return raw.monthly_saving ?? null;
+}
+
+export function extractConfidence(raw: RawFinding): number | null {
+  return raw.confidence ?? null;
 }
 
 function runCommand(
@@ -248,6 +259,8 @@ export async function runSingleCommand(
       location: extractLocation(f),
       monthly_cost: extractMonthlyCost(f),
       monthly_saving: extractMonthlySaving(f),
+      confidence: extractConfidence(f),
+      reasoning: f.reasoning || '',
     })),
   };
 }
