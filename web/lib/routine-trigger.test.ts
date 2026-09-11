@@ -8,7 +8,47 @@
  * child_process would only prove the mock was called.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { triggerQueueDrain, resetDrainStateForTests } from './routine-trigger';
+import { triggerQueueDrain, resetDrainStateForTests, buildWindowsCommandLine } from './routine-trigger';
+
+/** Splits a built command line into its top-level quoted tokens. Anything the
+ * builder failed to quote simply will not appear, which is what makes the
+ * token count a real assertion rather than a formatting check. */
+function quotedTokens(commandLine: string): string[] {
+  return commandLine.match(/"(?:[^"]|"")*"/g) ?? [];
+}
+
+describe('buildWindowsCommandLine', () => {
+  // The original bug: a separate args array was handed to spawn with
+  // shell:true, which Node concatenates with plain spaces instead of
+  // escaping. cmd.exe then tokenized the multi-word prompt into dozens of
+  // arguments and claude received garbage, so every drain silently did
+  // nothing. These tests fail if that shape ever comes back.
+  it('keeps a multi-word argument as one token instead of letting cmd.exe split it', () => {
+    const args = ['-p', 'drain the queue, then stop. do not ask questions', '--allowedTools', 'x'];
+
+    const built = buildWindowsCommandLine('claude', args);
+    const tokens = quotedTokens(built);
+
+    expect(tokens).toHaveLength(1 + args.length);
+    // Nothing outside a quoted token — an unquoted fragment would mean an
+    // argument got torn apart at a space.
+    expect(tokens.join(' ')).toBe(built);
+    expect(tokens[2]).toBe('"drain the queue, then stop. do not ask questions"');
+  });
+
+  it('quotes the tool glob so cmd.exe cannot expand or split it', () => {
+    const built = buildWindowsCommandLine('claude', ['--allowedTools', 'mcp__btg-devops__*']);
+
+    expect(built).toContain('"mcp__btg-devops__*"');
+  });
+
+  it('doubles embedded double quotes so they survive the tokenizer', () => {
+    const built = buildWindowsCommandLine('claude', ['say "hello" now']);
+
+    expect(built).toBe('"claude" "say ""hello"" now"');
+    expect(quotedTokens(built)).toHaveLength(2);
+  });
+});
 
 describe('triggerQueueDrain', () => {
   const saved: Record<string, string | undefined> = {};

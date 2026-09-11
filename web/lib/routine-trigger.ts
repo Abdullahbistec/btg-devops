@@ -77,6 +77,16 @@ function quoteForWindowsShell(arg: string): string {
   return `"${arg.replace(/"/g, '""')}"`;
 }
 
+/** Assembles one already-quoted command string for cmd.exe.
+ *
+ * Exported for tests: this is where the drain silently broke once, and the
+ * failure was invisible at runtime (stdio is ignored, and a mangled prompt
+ * still exits 0), so it needs coverage that does not depend on spawning
+ * anything. See the shell:true note in defaultSpawn. */
+export function buildWindowsCommandLine(cmd: string, args: string[]): string {
+  return [cmd, ...args].map(quoteForWindowsShell).join(' ');
+}
+
 function defaultSpawn(cmd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     // shell:true on Windows because `claude` is a .cmd shim there, which
@@ -87,7 +97,7 @@ function defaultSpawn(cmd: string, args: string[]): Promise<void> {
     // one already-quoted command string sidesteps that.
     const isWindows = process.platform === 'win32';
     const child = isWindows
-      ? childSpawn([cmd, ...args].map(quoteForWindowsShell).join(' '), { stdio: 'ignore', shell: true })
+      ? childSpawn(buildWindowsCommandLine(cmd, args), { stdio: 'ignore', shell: true })
       : childSpawn(cmd, args, { stdio: 'ignore' });
     child.on('error', reject);
     child.on('exit', code =>
