@@ -83,45 +83,48 @@ func runStorage(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// computeStorageFindings holds the unmodified fetch+analyze body previously
-// inline in runStorage. Detection logic below this point is byte-for-byte
-// identical to before — only the function boundary moved, so runStorage's
-// own output is unchanged and this same logic can now also be called by
-// storageProviderAdapter (see below) via the provider registry.
-func computeStorageFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string) (StorageReport, error) {
+func fetchStorageAccounts(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID, resourceGroupFilter string) ([]*armstorage.Account, *armstorage.ManagementPoliciesClient, error) {
 	accountsClient, err := armstorage.NewAccountsClient(subID, cred, nil)
 	if err != nil {
-		return StorageReport{}, fmt.Errorf("creating storage accounts client: %w", err)
+		return nil, nil, fmt.Errorf("creating storage accounts client: %w", err)
 	}
 
-	// Fetch all storage accounts
 	fmt.Fprintf(os.Stderr, "Fetching storage accounts for subscription %s...\n", subID)
 	var accounts []*armstorage.Account
 	pager := accountsClient.NewListPager(nil)
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return StorageReport{}, fmt.Errorf("listing storage accounts: %w", err)
+			return nil, nil, fmt.Errorf("listing storage accounts: %w", err)
 		}
 		accounts = append(accounts, page.Value...)
 	}
 
-	// Filter by resource group if specified
-	if flagResourceGroup != "" {
+	if resourceGroupFilter != "" {
 		var filtered []*armstorage.Account
 		for _, a := range accounts {
 			if a.ID != nil {
 				rg := extractResourceGroup(*a.ID)
-				if strings.EqualFold(rg, flagResourceGroup) {
+				if strings.EqualFold(rg, resourceGroupFilter) {
 					filtered = append(filtered, a)
 				}
 			}
 		}
 		accounts = filtered
 	}
+	fmt.Fprintf(os.Stderr, "Found %d storage account(s).\n", len(accounts))
 
-	fmt.Fprintf(os.Stderr, "Found %d storage account(s). Analyzing...\n", len(accounts))
+	mgmtPolicyClient, err := armstorage.NewManagementPoliciesClient(subID, cred, nil)
+	if err != nil {
+		mgmtPolicyClient = nil
+	}
+	return accounts, mgmtPolicyClient, nil
+}
 
+// analyzeStorageAccounts is the unmodified analysis loop previously inline
+// in computeStorageFindings — byte-for-byte identical detection logic,
+// only the function boundary moved.
+func analyzeStorageAccounts(accounts []*armstorage.Account, mgmtPolicyClient *armstorage.ManagementPoliciesClient, ctx context.Context) StorageReport {
 	summary := StorageSummary{
 		TotalAccounts:      len(accounts),
 		FindingsBySeverity: map[string]int{},
@@ -129,12 +132,6 @@ func computeStorageFindings(ctx context.Context, cred *azidentity.DefaultAzureCr
 		ByReplication:      map[string]int{},
 	}
 	var findings []StorageFinding
-
-	// Fetch management policies (lifecycle) client
-	mgmtPolicyClient, err := armstorage.NewManagementPoliciesClient(subID, cred, nil)
-	if err != nil {
-		mgmtPolicyClient = nil
-	}
 
 	for _, acct := range accounts {
 		name := deref(acct.Name)
@@ -253,16 +250,20 @@ func computeStorageFindings(ctx context.Context, cred *azidentity.DefaultAzureCr
 		}
 	}
 
-	// Severity counts
 	for _, f := range findings {
 		summary.FindingsBySeverity[string(f.Severity)]++
 	}
+	return StorageReport{Summary: summary, Findings: findings}
+}
 
-	report := StorageReport{
-		Summary:  summary,
-		Findings: findings,
+// computeStorageFindings composes fetch + analyze, preserving today's exact
+// public behavior for the two existing callers (runStorage, storageProviderAdapter.Run).
+func computeStorageFindings(ctx context.Context, cred *azidentity.DefaultAzureCredential, subID string) (StorageReport, error) {
+	accounts, mgmtPolicyClient, err := fetchStorageAccounts(ctx, cred, subID, flagResourceGroup)
+	if err != nil {
+		return StorageReport{}, err
 	}
-	return report, nil
+	return analyzeStorageAccounts(accounts, mgmtPolicyClient, ctx), nil
 }
 
 // ---------- provider registration ----------
