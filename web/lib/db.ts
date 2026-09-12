@@ -208,6 +208,7 @@ async function initSchema(pool: Pool): Promise<void> {
       currency      TEXT NOT NULL,
       by_category   TEXT NOT NULL,
       by_type       TEXT NOT NULL,
+      unpriced      TEXT DEFAULT '[]',
       fetched_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
@@ -242,6 +243,8 @@ async function initSchema(pool: Pool): Promise<void> {
     ALTER TABLE cost_fetch_requests ADD COLUMN IF NOT EXISTS months INTEGER DEFAULT NULL;
 
     ALTER TABLE schedules ADD COLUMN IF NOT EXISTS times_per_day INTEGER DEFAULT 1;
+
+    ALTER TABLE hetzner_cost_snapshots ADD COLUMN IF NOT EXISTS unpriced TEXT DEFAULT '[]';
   `);
 
   // Seed default subscription from env vars if the table is empty — same
@@ -650,15 +653,21 @@ export interface HetznerCostSnapshot {
   currency: string;
   by_category: string; // JSON-encoded { [category]: number }
   by_type: string;      // JSON-encoded { [serverType]: { count, monthly_total } }
+  unpriced: string;     // JSON-encoded string[] — resources whose price lookup failed
   fetched_at: string;
 }
 
-export async function saveHetznerCostSnapshot(data: { totalMonthly: number; currency: string; byCategory: unknown; byType: unknown }): Promise<void> {
+/** `unpriced` (defaulting to an empty list) records resources whose price
+ * lookup failed on the Go side (cmd/hetzner_cost.go) and were therefore
+ * excluded from totalMonthly. Persisting it — rather than dropping it here —
+ * is what lets the API and UI surface a pricing gap instead of it silently
+ * becoming an understated $0-inclusive total. */
+export async function saveHetznerCostSnapshot(data: { totalMonthly: number; currency: string; byCategory: unknown; byType: unknown; unpriced?: unknown }): Promise<void> {
   const db = await getDB();
   await db.query(
-    `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, fetched_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [uuidv4(), data.totalMonthly, data.currency, JSON.stringify(data.byCategory), JSON.stringify(data.byType)]
+    `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, fetched_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+    [uuidv4(), data.totalMonthly, data.currency, JSON.stringify(data.byCategory), JSON.stringify(data.byType), JSON.stringify(data.unpriced ?? [])]
   );
 }
 

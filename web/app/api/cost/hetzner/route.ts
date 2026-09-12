@@ -18,6 +18,7 @@ export async function GET() {
       currency: snap.currency,
       byCategory: JSON.parse(snap.by_category),
       byType: JSON.parse(snap.by_type),
+      unpriced: snap.unpriced ? JSON.parse(snap.unpriced) : [],
       fetchedAt: snap.fetched_at,
       estimate: true,
     });

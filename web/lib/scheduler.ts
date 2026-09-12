@@ -114,6 +114,7 @@ async function runDailyHetznerCostRefresh() {
       currency: report.currency,
       byCategory: report.byCategory,
       byType: report.byType,
+      unpriced: report.unpriced,
     });
   } catch (e) {
     console.error('[scheduler] daily Hetzner cost refresh failed:', e);

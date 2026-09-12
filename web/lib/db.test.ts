@@ -331,4 +331,34 @@ describe('hetzner cost snapshots', () => {
     expect(snap?.currency).toBe('USD');
     expect(JSON.parse(snap!.by_category).servers).toBeCloseTo(213.35, 2);
   });
+
+  it('round-trips a non-empty unpriced list so a pricing gap stays visible', async () => {
+    const db = await getDB();
+    await db.query('DELETE FROM hetzner_cost_snapshots');
+
+    await saveHetznerCostSnapshot({
+      totalMonthly: 100,
+      currency: 'USD',
+      byCategory: { servers: 100 },
+      byType: { cpx11: { count: 1, monthly_total: 100 } },
+      unpriced: ['server web-1 (type unknown-type)', 'primary ip pip-1 (type ipv4)'],
+    });
+
+    const snap = await getHetznerCostSnapshot();
+    const unpriced = JSON.parse(snap!.unpriced);
+    expect(unpriced).toEqual(['server web-1 (type unknown-type)', 'primary ip pip-1 (type ipv4)']);
+  });
+
+  it('defaults unpriced to an empty list when not provided', async () => {
+    const db = await getDB();
+    await db.query('DELETE FROM hetzner_cost_snapshots');
+
+    await saveHetznerCostSnapshot({
+      totalMonthly: 100, currency: 'USD',
+      byCategory: { servers: 100 }, byType: {},
+    });
+
+    const snap = await getHetznerCostSnapshot();
+    expect(JSON.parse(snap!.unpriced)).toEqual([]);
+  });
 });

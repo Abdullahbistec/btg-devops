@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { v4 as uuidv4 } from 'uuid';
 import {
   getDB, getSubscription, createCostFetchRequest, createCostBackfillRequest, getPendingCostFetchRequestFor,
   completeCostFetchRequest, failCostFetchRequest, saveHetznerCostSnapshot,
@@ -55,8 +56,14 @@ export async function POST(req: NextRequest) {
           currency: report.currency,
           byCategory: report.byCategory,
           byType: report.byType,
+          unpriced: report.unpriced,
         });
-        return NextResponse.json({ status: 'done' }, { status: 202 });
+        // Same {id, status} shape as the Azure branch below, even though this
+        // id is synthetic (nothing is queued in cost_fetch_requests for
+        // Hetzner) — the Hetzner refresh completes synchronously above, so a
+        // caller has no reason to poll it, but a shape that looks like the
+        // Azure response is one a polling caller can't mistake for "no id".
+        return NextResponse.json({ id: uuidv4(), status: 'done' }, { status: 202 });
       } catch (e) {
         return NextResponse.json({ error: (e as Error).message }, { status: 500 });
       }
