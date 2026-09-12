@@ -81,6 +81,7 @@ export interface NormalizedFinding {
   monthly_saving: number | null;
   confidence: number | null;
   reasoning: string;
+  currency: string | null;
 }
 
 interface RawFinding {
@@ -128,6 +129,7 @@ interface RawFinding {
   datacenter?: string;
   home_location?: string;
   est_monthly_waste_eur?: number;
+  currency?: string;
 }
 
 function extractResource(raw: RawFinding): string {
@@ -160,6 +162,10 @@ export function extractMonthlySaving(raw: RawFinding): number | null {
 
 export function extractConfidence(raw: RawFinding): number | null {
   return raw.confidence ?? null;
+}
+
+export function extractCurrency(raw: RawFinding): string | null {
+  return raw.currency ?? null;
 }
 
 function runCommand(
@@ -261,6 +267,7 @@ export async function runSingleCommand(
       monthly_saving: extractMonthlySaving(f),
       confidence: extractConfidence(f),
       reasoning: f.reasoning || '',
+      currency: extractCurrency(f),
     })),
   };
 }

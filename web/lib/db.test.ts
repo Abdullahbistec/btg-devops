@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
-import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory, getStaleRunningAudits } from './db';
+import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory, getStaleRunningAudits, saveHetznerCostSnapshot, getHetznerCostSnapshot } from './db';
 
 /** Refuses to run destructive setup against anything that isn't clearly a
  * disposable test database — same intent as the old SQLite guard (which
@@ -260,5 +260,23 @@ describe('getStaleRunningAudits', () => {
 
     const stale = await getStaleRunningAudits(12);
     expect(stale).toHaveLength(0);
+  });
+});
+
+describe('hetzner cost snapshots', () => {
+  it('round-trips a snapshot and returns the newest', async () => {
+    const db = await getDB();
+    await db.query('DELETE FROM hetzner_cost_snapshots');
+
+    await saveHetznerCostSnapshot({
+      totalMonthly: 246.89, currency: 'USD',
+      byCategory: { servers: 213.35, volumes: 24.54 },
+      byType: { cpx11: { count: 1, monthly_total: 5.99 } },
+    });
+
+    const snap = await getHetznerCostSnapshot();
+    expect(snap?.total_monthly).toBeCloseTo(246.89, 2);
+    expect(snap?.currency).toBe('USD');
+    expect(JSON.parse(snap!.by_category).servers).toBeCloseTo(213.35, 2);
   });
 });

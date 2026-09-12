@@ -197,6 +197,19 @@ async function initSchema(pool: Pool): Promise<void> {
       PRIMARY KEY (subscription_id, snapshot_date)
     );
     CREATE INDEX IF NOT EXISTS idx_cost_snapshot_history_sub ON cost_snapshot_history(subscription_id, snapshot_date);
+
+    -- Latest Hetzner cost estimate, mirroring cost_snapshots' shape for
+    -- Azure — one row is written per fetch and getHetznerCostSnapshot()
+    -- always reads back the newest by fetched_at, since (unlike
+    -- cost_snapshots) there is no natural single-row key to upsert on.
+    CREATE TABLE IF NOT EXISTS hetzner_cost_snapshots (
+      id            TEXT PRIMARY KEY,
+      total_monthly DOUBLE PRECISION NOT NULL,
+      currency      TEXT NOT NULL,
+      by_category   TEXT NOT NULL,
+      by_type       TEXT NOT NULL,
+      fetched_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
 
   // Idempotent column migrations. Every CREATE TABLE above is IF NOT EXISTS,
@@ -216,6 +229,7 @@ async function initSchema(pool: Pool): Promise<void> {
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS support_ticket_ref TEXT DEFAULT '';
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS confidence         DOUBLE PRECISION DEFAULT NULL;
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS reasoning          TEXT DEFAULT NULL;
+    ALTER TABLE findings ADD COLUMN IF NOT EXISTS currency           TEXT DEFAULT NULL;
 
     ALTER TABLE audits ADD COLUMN IF NOT EXISTS resources_scanned INTEGER DEFAULT 0;
     ALTER TABLE audits ADD COLUMN IF NOT EXISTS current_step      TEXT DEFAULT '';
@@ -627,6 +641,30 @@ export async function saveCostSnapshot(subscriptionId: string, data: { totalCost
   } catch (e) {
     console.error('saveCostSnapshot: failed to write cost_snapshot_history (non-fatal):', e);
   }
+}
+
+export interface HetznerCostSnapshot {
+  id: string;
+  total_monthly: number;
+  currency: string;
+  by_category: string; // JSON-encoded { [category]: number }
+  by_type: string;      // JSON-encoded { [serverType]: { count, monthly_total } }
+  fetched_at: string;
+}
+
+export async function saveHetznerCostSnapshot(data: { totalMonthly: number; currency: string; byCategory: unknown; byType: unknown }): Promise<void> {
+  const db = await getDB();
+  await db.query(
+    `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, fetched_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())`,
+    [uuidv4(), data.totalMonthly, data.currency, JSON.stringify(data.byCategory), JSON.stringify(data.byType)]
+  );
+}
+
+export async function getHetznerCostSnapshot(): Promise<HetznerCostSnapshot | null> {
+  const db = await getDB();
+  const { rows } = await db.query('SELECT * FROM hetzner_cost_snapshots ORDER BY fetched_at DESC LIMIT 1');
+  return rows[0] ?? null;
 }
 
 export interface CostSnapshotHistoryRow {
