@@ -2,6 +2,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import Sidebar from '@/components/Sidebar';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
+import { resourceGroupLabel } from '@/lib/cost-labels';
 
 interface CostFinding {
   id: string;
@@ -722,7 +723,7 @@ function SpendView() {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <BreakdownCard title="By Service" rows={data.byService} total={data.totalCost} currency={data.currency} color={ACCENT} />
-            <BreakdownCard title="By Resource Group" rows={data.byResourceGroup} total={data.totalCost} currency={data.currency} color={WARN} />
+            <BreakdownCard title="By Resource Group" rows={data.byResourceGroup.map(r => ({ ...r, name: resourceGroupLabel(r.name) }))} total={data.totalCost} currency={data.currency} color={WARN} />
           </div>
 
           <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>

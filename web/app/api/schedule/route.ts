@@ -9,6 +9,7 @@ interface Schedule {
   name: string;
   frequency: string;
   hour: number;
+  times_per_day: number;
   enabled: number;
   last_run_at: string | null;
   next_run_at: string | null;
@@ -30,14 +31,18 @@ export async function POST(req: NextRequest) {
   if (!(await isAdminRequest(req))) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   try {
     const body = await req.json().catch(() => ({}));
-    const { name, frequency, hour, subscription_id } = body as Partial<Schedule>;
+    const { name, frequency, hour, times_per_day, subscription_id } = body as Partial<Schedule>;
+    // Must evenly divide 24 so slots land on the hour every time — anything
+    // else (e.g. 5x/day) would drift, which computeNextRun assumes never happens.
+    const VALID_TIMES_PER_DAY = [1, 2, 3, 4, 6, 8, 12, 24];
+    const timesPerDay = VALID_TIMES_PER_DAY.includes(Number(times_per_day)) ? Number(times_per_day) : 1;
     const db = await getDB();
     const id = uuidv4();
-    const next_run = computeNextRun(frequency ?? 'daily', Number(hour ?? 2));
+    const next_run = computeNextRun(frequency ?? 'daily', Number(hour ?? 2), new Date(), timesPerDay);
     await db.query(
-      `INSERT INTO schedules (id, name, frequency, hour, enabled, next_run_at, subscription_id)
-       VALUES ($1, $2, $3, $4, 1, $5, $6)`,
-      [id, name || 'Scheduled Audit', frequency || 'daily', Number(hour ?? 2), next_run, subscription_id || null]
+      `INSERT INTO schedules (id, name, frequency, hour, times_per_day, enabled, next_run_at, subscription_id)
+       VALUES ($1, $2, $3, $4, $5, 1, $6, $7)`,
+      [id, name || 'Scheduled Audit', frequency || 'daily', Number(hour ?? 2), timesPerDay, next_run, subscription_id || null]
     );
     return NextResponse.json({ id });
   } catch (e) {

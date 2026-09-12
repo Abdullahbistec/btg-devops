@@ -32,6 +32,34 @@ describe('computeNextRun', () => {
       expect(result.slice(13)).toBe(':00:00');
     }
   });
+
+  it('picks the next slot today when timesPerDay > 1 and a later slot remains', () => {
+    const now = new Date('2026-09-01T00:30:00.000Z');
+    expect(computeNextRun('daily', 0, now, 4)).toBe('2026-09-01 06:00:00');
+  });
+
+  it('rolls to the first slot tomorrow once every slot today has passed', () => {
+    const now = new Date('2026-09-01T23:00:00.000Z');
+    expect(computeNextRun('daily', 0, now, 4)).toBe('2026-09-02 00:00:00');
+  });
+
+  it('spaces every slot evenly across the day for timesPerDay=4', () => {
+    const now = new Date('2026-09-01T00:00:00.000Z');
+    const slots: string[] = [];
+    let cursor = now;
+    for (let i = 0; i < 4; i++) {
+      const next = computeNextRun('daily', 0, cursor, 4);
+      slots.push(next.slice(11, 16));
+      cursor = new Date(next.replace(' ', 'T') + 'Z');
+    }
+    expect(slots).toEqual(['06:00', '12:00', '18:00', '00:00']);
+  });
+
+  it('ignores timesPerDay for weekly and monthly schedules', () => {
+    const now = new Date('2026-09-01T05:00:00.000Z');
+    expect(computeNextRun('weekly', 2, now, 4)).toBe('2026-09-08 02:00:00');
+    expect(computeNextRun('monthly', 2, now, 4)).toBe('2026-10-01 02:00:00');
+  });
 });
 
 describe('toUtcTimestamp', () => {

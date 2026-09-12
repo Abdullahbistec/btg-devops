@@ -6,7 +6,9 @@ name: Scheduled Governance Audit
 # by default; this just stops runs from stacking on top of each other.
 on:
   schedule:
-    - cron: '0 6 * * *'   # once daily, 06:00 UTC
+    # 4x/day, 6 hours apart, :30 offset — 00:30/06:30/12:30/18:30 UTC
+    # (06:00/12:00/18:00/00:00 SLST, UTC+5:30)
+    - cron: '30 0,6,12,18 * * *'
   workflow_dispatch: {}    # manual "Run workflow" button, same job
 
 jobs:

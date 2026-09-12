@@ -174,7 +174,7 @@ function DashboardInner() {
             {(!isPP || data?.ppReady) && (
               <>
                 {/* KPI ROW */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8 }}>
                   <KPICard label="Total Findings" value={data?.kpi.total ?? 0} color="#00C2FF" sparkData={sparkVals}
                     icon={<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="#00C2FF" strokeWidth="1.5"><path d="M2 10l3-3 2.5 2 4-5"/></svg>}
                   />
@@ -184,7 +184,15 @@ function DashboardInner() {
                   <KPICard label="Warning Findings" value={data?.kpi.warning ?? 0} color="#FFA502" sparkData={warnVals}
                     icon={<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="#FFA502" strokeWidth="1.5"><path d="M6.5 2L1 11h11L6.5 2z"/><path d="M6.5 7V5M6.5 9v.5"/></svg>}
                   />
-                  <KPICard label={meta.kpiLabel} value={data?.resourcesScanned ? String(data.resourcesScanned) : '—'} color="#2ED573" sparkData={infoVals}
+                  <KPICard label="Info Findings" value={data?.kpi.info ?? 0} color="#54A0FF" sparkData={infoVals}
+                    icon={<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="#54A0FF" strokeWidth="1.5"><circle cx="6.5" cy="6.5" r="5"/><path d="M6.5 6v3.5M6.5 3.5v.5"/></svg>}
+                  />
+                  {/* No sparkData: the trend rows carry finding counts only, with no
+                      resources-scanned series to draw. This card used to borrow
+                      infoVals, which drew the info-findings trend under a
+                      resources-scanned number — now that Info has its own card, that
+                      would render the identical line twice. */}
+                  <KPICard label={meta.kpiLabel} value={data?.resourcesScanned ? String(data.resourcesScanned) : '—'} color="#2ED573"
                     icon={<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="#2ED573" strokeWidth="1.5"><rect x="1" y="1" width="4.5" height="4.5" rx="1"/><rect x="7.5" y="1" width="4.5" height="4.5" rx="1"/><rect x="1" y="7.5" width="4.5" height="4.5" rx="1"/><rect x="7.5" y="7.5" width="4.5" height="4.5" rx="1"/></svg>}
                   />
                 </div>
@@ -719,6 +727,92 @@ function RemediationControl({ findingId }: { findingId: string }) {
   );
 }
 
+interface SupportTicketFinding {
+  id: string;
+  severity: string;
+  service: string;
+  resource?: string;
+  category?: string;
+  description?: string;
+  recommendation?: string;
+}
+
+/** No fixed recipient — there's no single support mailbox configured for
+ * this app, so the mailto: link leaves "to" blank and lets whoever clicks
+ * it pick the right address; the finding's own details are pre-filled into
+ * the subject/body either way. Saving a reference back (a ticket number,
+ * or just the email subject line) is a separate, plain text field — no
+ * live ticketing-system integration, by design. */
+function SupportTicketControl({ finding }: { finding: SupportTicketFinding }) {
+  const [ref, setRef] = useState('');
+  const [savedRef, setSavedRef] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/findings/${finding.id}`).then(r => r.ok ? r.json() : null).then(d => {
+      setRef(d?.support_ticket_ref || '');
+      setSavedRef(d?.support_ticket_ref || '');
+      setLoading(false);
+    });
+  }, [finding.id]);
+
+  async function save() {
+    if (ref === savedRef) return;
+    setSaving(true);
+    await fetch(`/api/findings/${finding.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ support_ticket_ref: ref }),
+    });
+    setSavedRef(ref);
+    setSaving(false);
+  }
+
+  const subject = `[${finding.severity}] ${finding.service}${finding.resource ? '/' + finding.resource : ''}: ${finding.category || 'Finding'}`;
+  const body = [
+    `Finding ID: ${finding.id}`,
+    `Severity: ${finding.severity}`,
+    `Service: ${finding.service}`,
+    `Resource: ${finding.resource || '(n/a)'}`,
+    '',
+    'Description:',
+    finding.description || '(none)',
+    '',
+    'Recommendation:',
+    finding.recommendation || '(none)',
+  ].join('\n');
+  const mailtoHref = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+  return (
+    <div>
+      <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span>Support Ticket {saving && <span style={{ color: 'var(--accent)' }}>· saving…</span>}</span>
+        <a href={mailtoHref} style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>
+          ✉ Email support about this
+        </a>
+      </div>
+      {loading ? (
+        <div style={{ fontSize: 11, color: 'var(--muted)' }}>Loading…</div>
+      ) : (
+        <input
+          type="text"
+          value={ref}
+          onChange={e => setRef(e.target.value)}
+          onBlur={save}
+          placeholder="Paste a ticket reference (e.g. TICKET-123, or the email subject)"
+          maxLength={200}
+          style={{
+            width: '100%', boxSizing: 'border-box', padding: '7px 10px', fontSize: 11,
+            background: 'var(--card2)', border: '1px solid var(--border)', borderRadius: 6,
+            color: 'var(--text)',
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 function ComplianceList({ findings }: { findings: Finding[] }) {
   const services = [...new Set(findings.map(f => f.service))];
   if (services.length === 0) return <EmptyState />;
@@ -1132,6 +1226,9 @@ function FindingsCard({ findings, svcTabs, label }: { findings: Finding[]; svcTa
 
               {/* Remediation status */}
               <RemediationControl findingId={detail.id} />
+
+              {/* Support ticket */}
+              <SupportTicketControl finding={detail} />
             </div>
           </div>
         </>,

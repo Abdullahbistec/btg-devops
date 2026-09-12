@@ -39,6 +39,7 @@ interface Schedule {
   name: string;
   frequency: string;
   hour: number;
+  times_per_day: number;
   enabled: number;
   last_run_at: string | null;
   next_run_at: string | null;
@@ -72,7 +73,7 @@ export default function SettingsPage() {
   const [addingSubError, setAddingSubError] = useState('');
   const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
   const [budgetMsg, setBudgetMsg] = useState<{ id: string; ok: boolean; text: string } | null>(null);
-  const [newSched, setNewSched] = useState({ name: 'Nightly Audit', frequency: 'daily', hour: '2' });
+  const [newSched, setNewSched] = useState({ name: 'Nightly Audit', frequency: 'daily', hour: '2', times_per_day: '1' });
   const [addingSchedMsg, setAddingSchedMsg] = useState('');
 
   function loadUsers() {
@@ -161,7 +162,12 @@ export default function SettingsPage() {
     const res = await fetch('/api/schedule', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newSched.name, frequency: newSched.frequency, hour: parseInt(newSched.hour) }),
+      body: JSON.stringify({
+        name: newSched.name,
+        frequency: newSched.frequency,
+        hour: parseInt(newSched.hour),
+        times_per_day: newSched.frequency === 'daily' ? parseInt(newSched.times_per_day) : 1,
+      }),
     });
     if (res.ok) {
       setAddingSchedMsg('Schedule created');
@@ -347,14 +353,16 @@ export default function SettingsPage() {
           </Section>
 
           {/* Scheduled Audits */}
-          <Section title="Scheduled Audits" subtitle="Auto-run audits on a schedule (requires a cron job hitting /api/schedule/run)">
+          <Section title="Scheduled Audits" subtitle="Auto-run audits on a schedule — runs in-process, polled every 60s, no external cron needed">
             {schedules.length === 0 && <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>No schedules configured.</div>}
             {schedules.map(s => (
               <div key={s.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{s.name}</div>
                   <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 1 }}>
-                    {s.frequency} at {String(s.hour).padStart(2,'0')}:00
+                    {s.frequency === 'daily' && s.times_per_day > 1
+                      ? `${s.times_per_day}x/day starting ${String(s.hour).padStart(2,'0')}:00`
+                      : `${s.frequency} at ${String(s.hour).padStart(2,'0')}:00`}
                     {s.next_run_at ? ` · next: ${s.next_run_at.slice(0,16)}` : ''}
                   </div>
                 </div>
@@ -384,10 +392,19 @@ export default function SettingsPage() {
                 </select>
               </div>
               <div>
-                <div style={{ fontSize: 9, color: 'var(--muted)', marginBottom: 3 }}>Hour (0-23)</div>
+                <div style={{ fontSize: 9, color: 'var(--muted)', marginBottom: 3 }}>{newSched.frequency === 'daily' ? 'Starting hour (UTC, 0-23)' : 'Hour (UTC, 0-23)'}</div>
                 <input type="number" min="0" max="23" value={newSched.hour} onChange={e => setNewSched(s => ({...s, hour: e.target.value}))}
                   style={{ fontSize: 11, padding: '4px 8px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text)', width: 60 }} />
               </div>
+              {newSched.frequency === 'daily' && (
+                <div>
+                  <div style={{ fontSize: 9, color: 'var(--muted)', marginBottom: 3 }}>Times per day</div>
+                  <select value={newSched.times_per_day} onChange={e => setNewSched(s => ({...s, times_per_day: e.target.value}))}
+                    style={{ fontSize: 11, padding: '4px 8px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text)' }}>
+                    {[1, 2, 3, 4, 6, 8, 12].map(n => <option key={n} value={n}>{n}x</option>)}
+                  </select>
+                </div>
+              )}
               <button onClick={addSchedule} style={{ padding: '5px 12px', fontSize: 11, fontWeight: 700, background: ACCENT, border: 'none', borderRadius: 3, color: '#000', cursor: 'pointer' }}>
                 + Add Schedule
               </button>

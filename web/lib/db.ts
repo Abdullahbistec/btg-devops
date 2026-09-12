@@ -93,7 +93,8 @@ async function initSchema(pool: Pool): Promise<void> {
       owner              TEXT DEFAULT '',
       location           TEXT DEFAULT '',
       monthly_cost       DOUBLE PRECISION DEFAULT NULL,
-      monthly_saving     DOUBLE PRECISION DEFAULT NULL
+      monthly_saving     DOUBLE PRECISION DEFAULT NULL,
+      support_ticket_ref TEXT DEFAULT ''
     );
 
     CREATE INDEX IF NOT EXISTS idx_findings_audit    ON findings(audit_id);
@@ -106,6 +107,7 @@ async function initSchema(pool: Pool): Promise<void> {
       name            TEXT DEFAULT 'Scheduled Audit',
       frequency       TEXT DEFAULT 'daily',
       hour            INTEGER DEFAULT 2,
+      times_per_day   INTEGER DEFAULT 1,
       enabled         INTEGER DEFAULT 1,
       last_run_at     TEXT,
       next_run_at     TEXT,
@@ -211,6 +213,7 @@ async function initSchema(pool: Pool): Promise<void> {
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS location           TEXT DEFAULT '';
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS monthly_cost       DOUBLE PRECISION DEFAULT NULL;
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS monthly_saving     DOUBLE PRECISION DEFAULT NULL;
+    ALTER TABLE findings ADD COLUMN IF NOT EXISTS support_ticket_ref TEXT DEFAULT '';
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS confidence         DOUBLE PRECISION DEFAULT NULL;
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS reasoning          TEXT DEFAULT NULL;
 
@@ -223,6 +226,8 @@ async function initSchema(pool: Pool): Promise<void> {
 
     ALTER TABLE cost_fetch_requests ADD COLUMN IF NOT EXISTS type   TEXT DEFAULT 'refresh';
     ALTER TABLE cost_fetch_requests ADD COLUMN IF NOT EXISTS months INTEGER DEFAULT NULL;
+
+    ALTER TABLE schedules ADD COLUMN IF NOT EXISTS times_per_day INTEGER DEFAULT 1;
   `);
 
   // Seed default subscription from env vars if the table is empty — same
@@ -393,6 +398,22 @@ export async function failAudit(id: string, message: string): Promise<void> {
     `UPDATE audits SET status = 'failed', error_message = $1, completed_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS') WHERE id = $2`,
     [message, id]
   );
+}
+
+/** Audits stuck in 'running' longer than maxAgeHours — orphaned by a server
+ * restart/crash mid-run (executeAudit's promise chain lives only in that
+ * process's memory; nothing else ever revisits the row once created). Used
+ * by the scheduler's stale-audit heal to stop these from sitting as
+ * permanently "running" in the UI. Compared against plain now(), matching
+ * the basis createAudit() already stamps started_at with. */
+export async function getStaleRunningAudits(maxAgeHours: number): Promise<{ id: string; name: string }[]> {
+  const db = await getDB();
+  const { rows } = await db.query(
+    `SELECT id, name FROM audits
+     WHERE status = 'running' AND started_at <= to_char(now() - ($1 || ' hours')::interval, 'YYYY-MM-DD HH24:MI:SS')`,
+    [maxAgeHours]
+  );
+  return rows;
 }
 
 // ── Findings ──────────────────────────────────────────────────────────────────
@@ -712,6 +733,26 @@ export async function getPendingCostFetchRequestFor(
     [subscriptionId, type]
   );
   return rows[0] ?? null;
+}
+
+/** True if a backfill was already requested for this subscription today
+ * (done, failed, or still pending — any of those means "already tried"),
+ * regardless of outcome. Used to throttle the scheduler's self-heal backfill
+ * to at most once per calendar day per subscription — without this, a
+ * persistent Azure rate-limit failure would retry on every 60s poll cycle
+ * instead of waiting for the next day. Compared against plain now() (not a
+ * UTC-explicit variant) to match the same basis requested_at's own column
+ * default already uses. */
+export async function hasBackfillRequestToday(subscriptionId: string): Promise<boolean> {
+  const db = await getDB();
+  const { rows } = await db.query(
+    `SELECT 1 FROM cost_fetch_requests
+     WHERE subscription_id = $1 AND type = 'backfill'
+       AND requested_at >= to_char(now(), 'YYYY-MM-DD')
+     LIMIT 1`,
+    [subscriptionId]
+  );
+  return rows.length > 0;
 }
 
 export async function listPendingCostFetchRequests(): Promise<CostFetchRequest[]> {

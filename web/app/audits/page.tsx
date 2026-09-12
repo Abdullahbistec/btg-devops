@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
-import { AZURE_COMMANDS, PP_COMMANDS } from '@/lib/btg-commands';
+import { AZURE_COMMANDS, PP_COMMANDS, HETZNER_COMMANDS } from '@/lib/btg-commands';
 
 interface Audit {
   id: string;
@@ -47,6 +47,11 @@ const AUDIT_STEPS = [
   { label: 'PP Apps',           key: 'pp-apps',            color: '#55EFC4' },
   { label: 'PP Flows',          key: 'pp-flows',           color: '#74B9FF' },
   { label: 'Power BI',          key: 'pp-powerbi',         color: '#F9CA24' },
+  { label: 'Hetzner Servers',      key: 'hetzner-servers',      color: '#D50C2D' },
+  { label: 'Hetzner Volumes',      key: 'hetzner-volumes',      color: '#0984E3' },
+  { label: 'Hetzner Floating IPs', key: 'hetzner-floatingips',  color: '#00B4D8' },
+  { label: 'Hetzner Firewalls',    key: 'hetzner-firewalls',    color: '#C0392B' },
+  { label: 'Hetzner Certificates', key: 'hetzner-certificates', color: '#8E44AD' },
 ];
 
 function AuditProgressBar({ audit }: { audit: Audit | null }) {
@@ -311,6 +316,13 @@ export default function AuditsPage() {
                 opacity: running ? 0.5 : 1, cursor: running ? 'not-allowed' : 'pointer',
               }}>
                 {running ? '⟳ Running…' : '▶ Run Power Platform Scan'}
+              </button>
+              <button onClick={() => runAudit([...HETZNER_COMMANDS], `Hetzner Scan ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`)} disabled={running} style={{
+                padding: '5px 14px', fontSize: 11, fontWeight: 700,
+                background: 'transparent', border: '1px solid #D50C2D', borderRadius: 3, color: '#D50C2D',
+                opacity: running ? 0.5 : 1, cursor: running ? 'not-allowed' : 'pointer',
+              }}>
+                {running ? '⟳ Running…' : '▶ Run Hetzner Scan'}
               </button>
               <button onClick={() => runAudit()} disabled={running} style={{
                 padding: '5px 14px', fontSize: 11, fontWeight: 700,

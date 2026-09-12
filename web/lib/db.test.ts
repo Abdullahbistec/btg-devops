@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
-import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory } from './db';
+import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory, getStaleRunningAudits } from './db';
 
 /** Refuses to run destructive setup against anything that isn't clearly a
  * disposable test database — same intent as the old SQLite guard (which
@@ -222,5 +222,43 @@ describe('findings table migrations', () => {
     );
     const names = rows.map((r: { column_name: string }) => r.column_name).sort();
     expect(names).toEqual(['confidence', 'reasoning']);
+  });
+});
+
+describe('getStaleRunningAudits', () => {
+  beforeEach(async () => {
+    await assertTestDatabase();
+    const db = await getDB();
+    await db.query('DELETE FROM findings');
+    await db.query('DELETE FROM audits');
+    await db.query('DELETE FROM subscriptions');
+    await db.query(`
+      INSERT INTO subscriptions (id, name, subscription_id, tenant_id, client_id)
+      VALUES ('sub-1', 'Test Sub', 'sub-guid', 'tenant-guid', 'client-guid')
+    `);
+  });
+
+  it('returns a running audit started well past the max age, but not a recent one', async () => {
+    const db = await getDB();
+    await db.query(`
+      INSERT INTO audits (id, subscription_id, name, status, started_at)
+      VALUES
+        ('audit-old', 'sub-1', 'Orphaned Audit', 'running', to_char(now() - interval '20 hours', 'YYYY-MM-DD HH24:MI:SS')),
+        ('audit-new', 'sub-1', 'Fresh Audit', 'running', to_char(now() - interval '5 minutes', 'YYYY-MM-DD HH24:MI:SS'))
+    `);
+
+    const stale = await getStaleRunningAudits(12);
+    expect(stale.map(a => a.id)).toEqual(['audit-old']);
+  });
+
+  it('ignores audits that already completed or failed, however old', async () => {
+    const db = await getDB();
+    await db.query(`
+      INSERT INTO audits (id, subscription_id, name, status, started_at)
+      VALUES ('audit-done', 'sub-1', 'Old Completed Audit', 'completed', to_char(now() - interval '20 hours', 'YYYY-MM-DD HH24:MI:SS'))
+    `);
+
+    const stale = await getStaleRunningAudits(12);
+    expect(stale).toHaveLength(0);
   });
 });

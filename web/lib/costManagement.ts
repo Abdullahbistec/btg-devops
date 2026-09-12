@@ -1,5 +1,6 @@
 import { getDB, getSubscription, saveCostSnapshot, saveCostSnapshotHistoryRow, hasCostSnapshotHistoryRow } from '@/lib/db';
 import { decryptSecret } from '@/lib/crypto';
+import { resourceGroupLabel } from '@/lib/cost-labels';
 
 interface CostRow {
   cost: number;
@@ -125,7 +126,7 @@ export async function fetchLiveCostSpend(sub: { id: string; name: string }, tena
   const rows: CostRow[] = rawRows.map(r => ({
     cost: Number(r[costIdx]) || 0,
     service: String(r[svcIdx] ?? 'Unknown'),
-    resourceGroup: String(r[rgIdx] ?? '(none)') || '(none)',
+    resourceGroup: resourceGroupLabel(r[rgIdx]),
     currency: String(r[currIdx] ?? 'USD'),
   }));
 
@@ -191,20 +192,22 @@ interface MonthCostResult {
 }
 
 /** The date bucket's raw value — an integer like 20260701 (first day of the
- * bucket) is the documented shape, but tolerate an ISO string too in case
- * that ever changes — either way, all that's needed out of it is which
- * calendar month the bucket represents. */
+ * bucket) is the documented shape; an ISO-ish string is the other real shape
+ * (confirmed via a live diagnostic call against the real API), and it is
+ * NOT reliably UTC-marked — Azure's actual Monthly-granularity response
+ * returns bare "2026-08-01T00:00:00" with no "Z"/offset at all, not always
+ * the "...Z" form. Routing that through `new Date()` parses it as LOCAL
+ * time; on a host east of UTC that shifts midnight-local backward across
+ * the date line into the previous UTC day, silently reporting the wrong
+ * month (this is what corrupted a real August total to $0 — the real spend
+ * rows got bucketed into '2026-07' instead and never matched the '2026-08'
+ * lookup). Reading the calendar digits directly off the string sidesteps
+ * the ambiguity entirely: no Date object, no timezone, ever. */
 function usageDateToYearMonth(raw: string | number): string | null {
   const s = String(raw);
   if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}`;
-  const d = new Date(s);
-  // UTC getters, not local ones. Azure's ISO values are UTC instants, so
-  // reading them through the host's timezone shifts a bucket into the
-  // neighbouring month at the boundary — writing 0 for one month and
-  // overwriting the previous month's row with it.
-  return isNaN(d.getTime())
-    ? null
-    : `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  const m = s.match(/^(\d{4})-(\d{2})-\d{2}/);
+  return m ? `${m[1]}-${m[2]}` : null;
 }
 
 /** Unlike fetchLiveCostSpend (always 'MonthToDate', granularity 'None'),

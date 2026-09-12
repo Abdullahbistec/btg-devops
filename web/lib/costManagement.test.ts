@@ -83,4 +83,20 @@ describe('parseMonthlyCostRows — month bucketing is timezone-independent', () 
     const result = parseMonthlyCostRows(columns, [[5, 20260701, 'Storage', 'USD']]);
     expect([...result.keys()]).toEqual(['2026-07']);
   });
+
+  it('buckets a BillingMonth value with no timezone suffix at all by its printed calendar month', () => {
+    // The real shape Azure's Monthly-granularity query actually returns —
+    // confirmed via a live diagnostic call — is a bare "2026-08-01T00:00:00"
+    // with no "Z" and no offset, not the "...Z" form the tests above assume.
+    // `new Date()` parses a string with no zone marker as LOCAL time, so on
+    // this host (+05:30) midnight-local becomes 2026-07-31T18:30:00Z —
+    // rolling backward across the date line into July. That's what silently
+    // filed real August spend under no month at all (backfill then wrote 0
+    // for August, having found nothing keyed '2026-08'). The fix reads the
+    // calendar digits directly off the string instead of going through Date
+    // at all, so this must resolve to '2026-08' regardless of host timezone.
+    const result = parseMonthlyCostRows(columns, [[278.5, '2026-08-01T00:00:00', 'Azure App Service', 'USD']]);
+    expect([...result.keys()]).toEqual(['2026-08']);
+    expect(result.get('2026-08')?.totalCost).toBe(278.5);
+  });
 });

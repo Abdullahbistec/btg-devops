@@ -26,14 +26,30 @@ export const NOW_UTC_SQL = `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:M
  * due. `hour` is interpreted as an hour of the UTC day, matching the UTC
  * timestamps this returns — previously it was set in the server's local
  * timezone and then serialised to UTC, so the stored value silently depended
- * on the host's offset. */
-export function computeNextRun(frequency: string, hour: number, now: Date = new Date()): string {
-  const next = new Date(now);
-  next.setUTCHours(hour, 0, 0, 0);
-  if (next <= now) {
-    if (frequency === 'daily') next.setUTCDate(next.getUTCDate() + 1);
-    else if (frequency === 'weekly') next.setUTCDate(next.getUTCDate() + 7);
-    else next.setUTCMonth(next.getUTCMonth() + 1);
+ * on the host's offset.
+ *
+ * `timesPerDay` only applies to 'daily' schedules (weekly/monthly ignore it)
+ * and must evenly divide 24 — it spreads that many runs across the day at
+ * equal spacing starting from `hour` (e.g. hour=0, timesPerDay=4 → 00:00,
+ * 06:00, 12:00, 18:00 UTC), then rolls to the first slot of the next day once
+ * every slot today has passed. Appended after `now` rather than inserted
+ * before it so every existing 2- and 3-arg call site (defaulting to one run a
+ * day) keeps working unchanged. */
+export function computeNextRun(frequency: string, hour: number, now: Date = new Date(), timesPerDay = 1): string {
+  const step = frequency === 'daily' && timesPerDay > 1 ? 24 / timesPerDay : 24;
+  const slotHours = Array.from({ length: Math.max(1, 24 / step) }, (_, i) => (hour + i * step) % 24).sort((a, b) => a - b);
+
+  for (const h of slotHours) {
+    const candidate = new Date(now);
+    candidate.setUTCHours(h, 0, 0, 0);
+    if (candidate > now) return toUtcTimestamp(candidate);
   }
+
+  // Every slot today has already passed — the first slot of the next period.
+  const next = new Date(now);
+  next.setUTCHours(slotHours[0], 0, 0, 0);
+  if (frequency === 'daily') next.setUTCDate(next.getUTCDate() + 1);
+  else if (frequency === 'weekly') next.setUTCDate(next.getUTCDate() + 7);
+  else next.setUTCMonth(next.getUTCMonth() + 1);
   return toUtcTimestamp(next);
 }

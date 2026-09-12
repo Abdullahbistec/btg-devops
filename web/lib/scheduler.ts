@@ -1,15 +1,27 @@
-import { getDB, hasCostSnapshotHistoryRow } from '@/lib/db';
+import { getDB, hasCostSnapshotHistoryRow, hasBackfillRequestToday, createCostBackfillRequest, completeCostFetchRequest, failCostFetchRequest, getStaleRunningAudits, failAudit } from '@/lib/db';
 import { executeAudit } from '@/lib/audit-executor';
-import { refreshCostSnapshot } from '@/lib/costManagement';
+import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
 import { computeNextRun, toUtcTimestamp, NOW_UTC_SQL } from '@/lib/schedule-time';
 
 const POLL_INTERVAL_MS = 60_000;
+
+// Worst case for a full sequential scan is ~23 commands x 20min + one 40min
+// 'idle' command, call it 8h — 12h gives that comfortable headroom before an
+// audit still showing 'running' is treated as orphaned rather than slow.
+const STALE_AUDIT_MAX_HOURS = 12;
+
+// Matches the manual "Backfill 6 months" button's own window (see
+// BACKFILL_MONTHS in web/app/cost/page.tsx) — kept as a separate constant
+// since nothing currently shares one between the frontend button and this
+// backend poller.
+const BACKFILL_MONTHS = 6;
 
 interface ScheduleRow {
   id: string;
   name: string;
   frequency: string;
   hour: number;
+  times_per_day: number;
   enabled: number;
   subscription_id: string | null;
 }
@@ -19,7 +31,7 @@ async function runDueSchedules() {
   let due: ScheduleRow[];
   try {
     const { rows } = await db.query(
-      `SELECT id, name, frequency, hour, enabled, subscription_id FROM schedules
+      `SELECT id, name, frequency, hour, times_per_day, enabled, subscription_id FROM schedules
        WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ${NOW_UTC_SQL}`
     );
     due = rows;
@@ -35,7 +47,7 @@ async function runDueSchedules() {
     } catch (e) {
       console.error(`[scheduler] schedule '${sched.name}' failed to start:`, e);
     }
-    const nextRun = computeNextRun(sched.frequency, sched.hour);
+    const nextRun = computeNextRun(sched.frequency, sched.hour, new Date(), sched.times_per_day || 1);
     await db.query(`UPDATE schedules SET last_run_at = ${NOW_UTC_SQL}, next_run_at = $1 WHERE id = $2`, [nextRun, sched.id]);
   }
 }
@@ -79,6 +91,74 @@ async function runDailyCostRefresh() {
   }
 }
 
+/** Retries backfilling closed months once per calendar day per subscription
+ * if the last attempt didn't fully succeed. backfillCostHistory() already
+ * skips any month that already has its end-of-month row (see
+ * hasCostSnapshotHistoryRow inside it), so calling it repeatedly is safe on
+ * its own — the actual risk is calling it on every 60s poll cycle while
+ * Azure is rate-limiting, which would hammer the API far harder than a
+ * human clicking the button ever would. hasBackfillRequestToday is the
+ * throttle: at most one attempt per subscription per day, whether that
+ * attempt succeeds or fails, mirroring how a human would realistically
+ * retry by hand — except this never forgets to. This is what closes the
+ * gap runDailyCostRefresh leaves: that function only ever touches *today's*
+ * row, so a month that closes without ever getting a clean day-by-day
+ * refresh (e.g. the server was down, or Azure was rate-limiting every
+ * attempt) stays permanently stuck until this retries the backfill. */
+async function runDailyBackfillHeal() {
+  const db = await getDB();
+  let subs: { id: string; name: string }[];
+  try {
+    const { rows } = await db.query(`SELECT id, name FROM subscriptions WHERE is_active = 1`);
+    subs = rows;
+  } catch (e) {
+    console.error('[scheduler] failed to query subscriptions for daily backfill heal:', e);
+    return;
+  }
+
+  for (const sub of subs) {
+    try {
+      if (await hasBackfillRequestToday(sub.id)) continue;
+      console.log(`[scheduler] running daily backfill heal for '${sub.name}' (${sub.id})`);
+      const request = await createCostBackfillRequest(sub.id, BACKFILL_MONTHS);
+      try {
+        const { saved, skipped, errors } = await backfillCostHistory(sub.id, BACKFILL_MONTHS);
+        const note = errors.length ? `Backfilled ${saved} month(s), ${skipped} already had data, ${errors.length} failed: ${errors.join('; ')}` : undefined;
+        await completeCostFetchRequest(request.id, note);
+      } catch (e) {
+        await failCostFetchRequest(request.id, (e as Error).message);
+      }
+    } catch (e) {
+      console.error(`[scheduler] daily backfill heal failed for '${sub.name}':`, e);
+    }
+  }
+}
+
+/** Marks any audit stuck in 'running' well past the longest a real run could
+ * take as failed. executeAudit() fires its command chain without awaiting it
+ * and returns immediately — that chain lives only in the memory of the
+ * process that started it. If the server restarts or crashes mid-run (dev
+ * hot-reload, redeploy, crash), the chain is lost and nothing ever calls
+ * updateAuditCounts()/failAudit() for that row, so without this heal it sits
+ * as "running" in the UI forever instead of surfacing as a failure. */
+async function healStaleAudits() {
+  let stale: { id: string; name: string }[];
+  try {
+    stale = await getStaleRunningAudits(STALE_AUDIT_MAX_HOURS);
+  } catch (e) {
+    console.error('[scheduler] failed to query stale running audits:', e);
+    return;
+  }
+  for (const audit of stale) {
+    console.warn(`[scheduler] marking stale audit '${audit.name}' (${audit.id}) as failed — still 'running' after ${STALE_AUDIT_MAX_HOURS}h, likely orphaned by a server restart`);
+    try {
+      await failAudit(audit.id, `Timed out after ${STALE_AUDIT_MAX_HOURS}h without completing — the server likely restarted mid-run. Re-run manually.`);
+    } catch (e) {
+      console.error(`[scheduler] failAudit failed for stale audit ${audit.id}:`, e);
+    }
+  }
+}
+
 let started = false;
 
 /** Starts the in-process schedule poller. Idempotent — safe to call multiple
@@ -91,8 +171,12 @@ export function startScheduler() {
   setInterval(() => {
     runDueSchedules().catch(e => console.error('[scheduler] poll cycle failed:', e));
     runDailyCostRefresh().catch(e => console.error('[scheduler] daily cost refresh poll failed:', e));
+    runDailyBackfillHeal().catch(e => console.error('[scheduler] daily backfill heal poll failed:', e));
+    healStaleAudits().catch(e => console.error('[scheduler] stale audit heal poll failed:', e));
   }, POLL_INTERVAL_MS);
   // Also do an immediate check on startup rather than waiting a full interval.
   runDueSchedules().catch(e => console.error('[scheduler] initial poll failed:', e));
   runDailyCostRefresh().catch(e => console.error('[scheduler] initial daily cost refresh failed:', e));
+  runDailyBackfillHeal().catch(e => console.error('[scheduler] initial daily backfill heal failed:', e));
+  healStaleAudits().catch(e => console.error('[scheduler] initial stale audit heal failed:', e));
 }
