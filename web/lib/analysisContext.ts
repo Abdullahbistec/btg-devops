@@ -70,6 +70,22 @@ export function buildCostBlock(
 }
 
 /**
+ * True when a scope could plausibly include Hetzner resources — the
+ * unscoped 'all' view, or a scope naming Hetzner explicitly (findings'
+ * `service` field for Hetzner resources is one of the HETZNER_SERVICE_LABELS
+ * values, e.g. "Hetzner Servers", "Hetzner Volumes").
+ *
+ * Without this guard, a scope-narrowed analysis (e.g. a single Azure
+ * storage service) still got an unrelated Hetzner run-rate line injected
+ * into its context — and the agent quotes verbatim what it's given, so an
+ * Azure-storage-scoped summary would end up citing a Hetzner figure that
+ * has nothing to do with the scope it was asked about.
+ */
+export function scopeIncludesHetzner(scope: string): boolean {
+  return scope === 'all' || scope.toLowerCase().includes('hetzner');
+}
+
+/**
  * Builds the findings-summary text block consumed by the async MCP
  * get_audit_data tool — kept as its own function (not inlined into that
  * route) so a future second caller doesn't have to re-derive what
@@ -109,7 +125,7 @@ export async function buildAuditContext(auditId?: string, scope: string = 'all')
     ([currency, total]) => ({ currency, total })
   );
 
-  const hetznerSnapshot = await getHetznerCostSnapshot();
+  const hetznerSnapshot = scopeIncludesHetzner(scope) ? await getHetznerCostSnapshot() : null;
   const hetzner = hetznerSnapshot
     ? { totalMonthly: hetznerSnapshot.total_monthly, currency: hetznerSnapshot.currency }
     : null;

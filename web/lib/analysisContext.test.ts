@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatFindingLine, buildCostBlock } from './analysisContext';
+import { formatFindingLine, buildCostBlock, scopeIncludesHetzner } from './analysisContext';
 
 describe('analysis context cost signal', () => {
   it('appends cost to a finding line when present', () => {
@@ -49,5 +49,23 @@ describe('analysis context cost signal', () => {
     expect(block).toContain('20.00 EUR');
     // ...and never blended into a single combined figure such as "30.00".
     expect(block).not.toContain('30.00');
+  });
+});
+
+describe('scopeIncludesHetzner', () => {
+  it('includes Hetzner for the unscoped "all" view', () => {
+    expect(scopeIncludesHetzner('all')).toBe(true);
+  });
+
+  it('includes Hetzner when the scope names a Hetzner service', () => {
+    expect(scopeIncludesHetzner('Hetzner Servers')).toBe(true);
+    expect(scopeIncludesHetzner('Hetzner Volumes')).toBe(true);
+  });
+
+  it('excludes Hetzner when the scope names an unrelated Azure service', () => {
+    // A storage-scoped analysis must not have an unrelated Hetzner run rate
+    // injected into its context — the agent quotes what it's given verbatim.
+    expect(scopeIncludesHetzner('Storage')).toBe(false);
+    expect(scopeIncludesHetzner('ACR')).toBe(false);
   });
 });

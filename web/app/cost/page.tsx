@@ -577,31 +577,126 @@ function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId
 interface HetznerSpend {
   totalMonthly: number; currency: string;
   byCategory: Record<string, number>; byType: Record<string, { count: number; monthly_total: number }>;
+  unpriced?: string[];
   fetchedAt: string; noData?: boolean; message?: string;
+  error?: string;
 }
+
+const UNPRICED_PREVIEW_COUNT = 3;
 
 function HetznerSpendView() {
   const [data, setData] = useState<HetznerSpend | null>(null);
   const [loading, setLoading] = useState(true);
+  // Distinct from `data === null` (still loading) and `data.noData` (a
+  // legitimate "no snapshot yet" state) — a fetch rejection or the route's
+  // own {error} 500 shape must render as a visible failure, not silently
+  // fall through to Object.entries(undefined) and crash the component.
+  const [fetchError, setFetchError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
 
-  useEffect(() => {
-    fetch('/api/cost/hetzner').then(r => r.json())
-      .then(d => { setData(d); setLoading(false); })
-      .catch(() => setLoading(false));
+  const load = useCallback(() => {
+    setLoading(true);
+    setFetchError('');
+    fetch('/api/cost/hetzner')
+      .then(r => r.json().then(d => ({ ok: r.ok, body: d })))
+      .then(({ ok, body }) => {
+        if (!ok || body?.error) {
+          setFetchError(body?.error || 'Failed to load Hetzner cost data.');
+          setData(null);
+        } else {
+          setData(body);
+        }
+        setLoading(false);
+      })
+      .catch(e => { setFetchError(String(e)); setLoading(false); });
   }, []);
 
+  useEffect(() => { load(); }, [load]);
+
+  // The Hetzner refresh completes synchronously in-process (see
+  // /api/cost-requests's provider:'hetzner' branch) — no polling needed,
+  // unlike the Azure Refresh button which waits on a queued request.
+  async function requestRefresh() {
+    setRefreshing(true);
+    setRefreshError('');
+    try {
+      const res = await fetch('/api/cost-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'hetzner' }),
+      });
+      const body = await res.json();
+      if (!res.ok || body?.error) throw new Error(body?.error || 'Could not refresh Hetzner cost data');
+      load();
+    } catch (e) {
+      setRefreshError((e as Error).message);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  const refreshButton = (
+    <button onClick={requestRefresh} disabled={refreshing} style={{
+      padding: '5px 12px', fontSize: 11, fontWeight: 700,
+      background: 'transparent', border: `1px solid ${ACCENT}`, borderRadius: 3, color: ACCENT,
+      cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1,
+    }}>
+      {refreshing ? '⟳ Refreshing…' : '↻ Refresh'}
+    </button>
+  );
+
   if (loading) return <div style={{ fontSize: 12, color: 'var(--muted)', padding: 32 }}>Loading…</div>;
+
+  if (fetchError) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ background: '#FF475718', border: '1px solid #FF475740', borderRadius: 6, padding: '10px 14px', fontSize: 12, color: CRIT }}>
+          ⚠ {fetchError}
+        </div>
+        {refreshError && (
+          <div style={{ background: '#FF475718', border: '1px solid #FF475740', borderRadius: 6, padding: '10px 14px', fontSize: 12, color: CRIT }}>
+            ⚠ {refreshError}
+          </div>
+        )}
+        <div>{refreshButton}</div>
+      </div>
+    );
+  }
+
   if (!data || data.noData) {
-    return <div className="glass" style={{ borderRadius: 8, padding: '24px 20px', textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
-      {data?.message ?? 'No Hetzner cost snapshot yet.'}
-    </div>;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="glass" style={{ borderRadius: 8, padding: '24px 20px', textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
+          {data?.message ?? 'No Hetzner cost snapshot yet.'}
+        </div>
+        {refreshError && (
+          <div style={{ background: '#FF475718', border: '1px solid #FF475740', borderRadius: 6, padding: '10px 14px', fontSize: 12, color: CRIT }}>
+            ⚠ {refreshError}
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'center' }}>{refreshButton}</div>
+      </div>
+    );
   }
 
   const cat = Object.entries(data.byCategory).map(([name, cost]) => ({ name, cost }));
   const types = Object.entries(data.byType).map(([name, v]) => ({ name: `${name} x${v.count}`, cost: v.monthly_total }));
+  // "By Server Type" rows only ever sum to the servers subtotal (volumes and
+  // primary IPs aren't server types) — using the grand total as the
+  // denominator here previously made every share read low and the column
+  // never reach 100%.
+  const serversSubtotal = data.byCategory.servers ?? 0;
+  const unpriced = data.unpriced ?? [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>{refreshButton}</div>
+      {refreshError && (
+        <div style={{ background: '#FF475718', border: '1px solid #FF475740', borderRadius: 6, padding: '10px 14px', fontSize: 12, color: CRIT }}>
+          ⚠ {refreshError}
+        </div>
+      )}
       <div className="glass" style={{ borderRadius: 10, padding: '22px 24px' }}>
         <div style={{ fontSize: 44, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
           {data.totalMonthly.toLocaleString(undefined, { style: 'currency', currency: data.currency })}
@@ -612,10 +707,28 @@ function HetznerSpendView() {
         <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 8, lineHeight: 1.5 }}>
           List-price estimate from Hetzner&apos;s pricing API, not a bill — Hetzner exposes no invoice endpoint.
         </div>
+        {unpriced.length > 0 && (
+          // Deliberately loud, not a tooltip: a pricing miss must never look
+          // like a legitimate $0 — the total above is understated by
+          // whatever these resources would have cost.
+          <div style={{
+            marginTop: 14, padding: '10px 14px', borderRadius: 6,
+            background: '#FF475718', border: '1px solid #FF475740', color: CRIT,
+            fontSize: 12, lineHeight: 1.5,
+          }}>
+            ⚠ {unpriced.length} resource{unpriced.length === 1 ? '' : 's'} could not be priced and {unpriced.length === 1 ? 'is' : 'are'} excluded from the total above — the true run rate is higher than shown.
+            <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+              {unpriced.slice(0, UNPRICED_PREVIEW_COUNT).map((u, i) => <li key={i}>{u}</li>)}
+              {unpriced.length > UNPRICED_PREVIEW_COUNT && (
+                <li>…and {unpriced.length - UNPRICED_PREVIEW_COUNT} more</li>
+              )}
+            </ul>
+          </div>
+        )}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <BreakdownCard title="By Category" rows={cat} total={data.totalMonthly} currency={data.currency} color={ACCENT} />
-        <BreakdownCard title="By Server Type" rows={types} total={data.totalMonthly} currency={data.currency} color={WARN} />
+        <BreakdownCard title="By Server Type" rows={types} total={serversSubtotal} currency={data.currency} color={WARN} />
       </div>
     </div>
   );
