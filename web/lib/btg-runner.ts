@@ -293,6 +293,46 @@ interface RawHetznerCostReport {
 }
 
 /**
+ * Parses and validates the `analyze hetzner-cost` JSON output.
+ *
+ * A cost path must never quietly report 0 — this feature exists specifically
+ * because the previous code silently assumed EUR and produced wrong figures.
+ * `currency` and `total_monthly` are therefore required and validated: if the
+ * CLI's output shape ever changes (a renamed field, a format change), this
+ * throws a clear error naming what's missing rather than falling back to a
+ * spurious "$0, EUR" report that would then get persisted and render on the
+ * dashboard as though Hetzner costs nothing. `by_category`/`by_type`
+ * defaulting to `{}` is fine — an account with no resources of a kind
+ * legitimately has none — but the two required fields above are never
+ * legitimately absent from a well-formed report.
+ *
+ * Exported as a standalone pure function (rather than inlined in
+ * runHetznerCostReport) so it can be unit-tested directly without shelling
+ * out — matching how the rest of this execFile-based file stays untested at
+ * the process-spawning layer.
+ */
+export function parseHetznerCostReport(stdout: string): HetznerCostResult {
+  const parsed: RawHetznerCostReport = JSON.parse(stdout);
+
+  if (typeof parsed.currency !== 'string' || parsed.currency.trim() === '') {
+    throw new Error(`hetzner-cost: missing or invalid "currency" in output (got ${JSON.stringify(parsed.currency)})`);
+  }
+  if (typeof parsed.total_monthly !== 'number' || Number.isNaN(parsed.total_monthly)) {
+    throw new Error(`hetzner-cost: missing or invalid "total_monthly" in output (got ${JSON.stringify(parsed.total_monthly)})`);
+  }
+
+  return {
+    currency: parsed.currency,
+    totalMonthly: parsed.total_monthly,
+    byCategory: parsed.by_category || {},
+    byType: parsed.by_type || {},
+    unpriced: parsed.unpriced,
+    estimate: parsed.estimate ?? true,
+    note: parsed.note || '',
+  };
+}
+
+/**
  * Runs `analyze hetzner-cost` and parses its cost-report shape directly.
  *
  * This deliberately does NOT go through runSingleCommand: that function
@@ -310,16 +350,7 @@ interface RawHetznerCostReport {
 export async function runHetznerCostReport(hcloudToken?: string): Promise<HetznerCostResult> {
   const env: Record<string, string> = { HCLOUD_TOKEN: hcloudToken || process.env.HCLOUD_TOKEN || '' };
   const stdout = await runCommand('hetzner-cost', env);
-  const parsed: RawHetznerCostReport = JSON.parse(stdout);
-  return {
-    currency: parsed.currency || 'EUR',
-    totalMonthly: parsed.total_monthly ?? 0,
-    byCategory: parsed.by_category || {},
-    byType: parsed.by_type || {},
-    unpriced: parsed.unpriced,
-    estimate: parsed.estimate ?? true,
-    note: parsed.note || '',
-  };
+  return parseHetznerCostReport(stdout);
 }
 
 export async function runAllCommands(

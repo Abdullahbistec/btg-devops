@@ -5,7 +5,7 @@
  * (add vitest to devDependencies first: npm i -D vitest)
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getPPCredentials, PP_SERVICE_LABELS, extractLocation, extractMonthlyCost, extractMonthlySaving, extractConfidence } from './btg-runner';
+import { getPPCredentials, PP_SERVICE_LABELS, extractLocation, extractMonthlyCost, extractMonthlySaving, extractConfidence, parseHetznerCostReport } from './btg-runner';
 
 const BASE = {
   tenantId: 'base-tenant',
@@ -117,5 +117,40 @@ describe('extractConfidence', () => {
   });
   it('returns null when absent (the rule-based fallback path never sets it)', () => {
     expect(extractConfidence({} as any)).toBeNull();
+  });
+});
+
+describe('parseHetznerCostReport', () => {
+  const validJson = JSON.stringify({
+    currency: 'USD',
+    total_monthly: 246.894,
+    by_category: { servers: 213.35, volumes: 24.544 },
+    by_type: { cpx32: { count: 1, monthly_total: 41.99 } },
+    estimate: true,
+    note: 'List-price estimate from the Hetzner pricing API. Not a bill.',
+  });
+
+  it('parses a well-formed report', () => {
+    const result = parseHetznerCostReport(validJson);
+    expect(result.currency).toBe('USD');
+    expect(result.totalMonthly).toBeCloseTo(246.894, 3);
+    expect(result.byCategory.servers).toBeCloseTo(213.35, 2);
+    expect(result.estimate).toBe(true);
+  });
+
+  it('defaults by_category/by_type to {} when legitimately absent', () => {
+    const result = parseHetznerCostReport(JSON.stringify({ currency: 'USD', total_monthly: 0 }));
+    expect(result.byCategory).toEqual({});
+    expect(result.byType).toEqual({});
+  });
+
+  it('throws rather than silently defaulting to EUR when currency is missing', () => {
+    const missingCurrency = JSON.stringify({ total_monthly: 246.894, by_category: {}, by_type: {} });
+    expect(() => parseHetznerCostReport(missingCurrency)).toThrow(/currency/i);
+  });
+
+  it('throws rather than silently defaulting to 0 when total_monthly is missing', () => {
+    const missingTotal = JSON.stringify({ currency: 'USD', by_category: {}, by_type: {} });
+    expect(() => parseHetznerCostReport(missingTotal)).toThrow(/total_monthly/i);
   });
 });
