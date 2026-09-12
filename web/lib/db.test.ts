@@ -52,6 +52,7 @@ describe('insertFindings — location and cost columns', () => {
       monthly_saving: 12.5,
       confidence: null,
       reasoning: null,
+      currency: null,
     }]);
 
     const db = await getDB();
@@ -77,6 +78,7 @@ describe('insertFindings — location and cost columns', () => {
       monthly_saving: null,
       confidence: null,
       reasoning: null,
+      currency: null,
     }]);
 
     const db = await getDB();
@@ -102,6 +104,7 @@ describe('insertFindings — location and cost columns', () => {
       monthly_saving: null,
       confidence: 0.87,
       reasoning: 'the account explicitly disables HTTPS-only traffic',
+      currency: null,
     }]);
 
     const db = await getDB();
@@ -126,6 +129,7 @@ describe('insertFindings — location and cost columns', () => {
       monthly_saving: null,
       confidence: null,
       reasoning: null,
+      currency: null,
     }]);
 
     const db = await getDB();
@@ -133,6 +137,54 @@ describe('insertFindings — location and cost columns', () => {
     const row = rows[0];
     expect(row.confidence).toBeNull();
     expect(row.reasoning).toBeNull();
+  });
+
+  it('round-trips currency when present', async () => {
+    await insertFindings('audit-1', [{
+      service: 'Hetzner Volumes',
+      resource: 'vol-1',
+      environment: '',
+      severity: 'Warning',
+      category: 'Idle Volume',
+      description: 'desc',
+      recommendation: 'rec',
+      owner: '',
+      location: '',
+      monthly_cost: 5.99,
+      monthly_saving: 5.99,
+      confidence: null,
+      reasoning: null,
+      currency: 'USD',
+    }]);
+
+    const db = await getDB();
+    const { rows } = await db.query('SELECT * FROM findings');
+    const row = rows[0];
+    expect(row.currency).toBe('USD');
+  });
+
+  it('leaves currency NULL when absent, rather than backfilling a guess', async () => {
+    await insertFindings('audit-1', [{
+      service: 'IAM',
+      resource: 'some-role',
+      environment: '',
+      severity: 'Warning',
+      category: 'Overprivileged',
+      description: 'desc',
+      recommendation: 'rec',
+      owner: '',
+      location: '',
+      monthly_cost: null,
+      monthly_saving: null,
+      confidence: null,
+      reasoning: null,
+      currency: null,
+    }]);
+
+    const db = await getDB();
+    const { rows } = await db.query('SELECT * FROM findings');
+    const row = rows[0];
+    expect(row.currency).toBeNull();
   });
 });
 
