@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
-import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory, getStaleRunningAudits, saveHetznerCostSnapshot, getHetznerCostSnapshot } from './db';
+import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory, getStaleRunningAudits, saveHetznerCostSnapshot, getHetznerCostSnapshot, getHetznerCostHistory } from './db';
 
 /** Refuses to run destructive setup against anything that isn't clearly a
  * disposable test database — same intent as the old SQLite guard (which
@@ -312,6 +312,59 @@ describe('getStaleRunningAudits', () => {
 
     const stale = await getStaleRunningAudits(12);
     expect(stale).toHaveLength(0);
+  });
+});
+
+describe('getHetznerCostHistory', () => {
+  // Refreshes run several times a day (the Refresh button plus the daily
+  // scheduler), so the raw table holds many rows per day. A run-rate chart
+  // wants one point per day, or the line shows vertical clusters that look
+  // like volatility where none exists.
+  it('collapses multiple same-day snapshots to the latest one per day', async () => {
+    const db = await getDB();
+    await db.query('DELETE FROM hetzner_cost_snapshots');
+    const row = (id: string, total: number, ts: string) => db.query(
+      `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, fetched_at)
+       VALUES ($1, $2, 'USD', '{}', '{}', '[]', $3)`,
+      [id, total, ts]
+    );
+    await row('h1', 100, '2026-09-10T02:00:00Z');
+    await row('h2', 111, '2026-09-11T02:00:00Z'); // earlier that day
+    await row('h3', 222, '2026-09-11T20:00:00Z'); // later same day — this one wins
+
+    const points = await getHetznerCostHistory(30);
+
+    expect(points).toHaveLength(2);
+    expect(points[1].total_monthly).toBeCloseTo(222, 2);
+  });
+
+  it('returns points oldest first, so a chart can plot them directly', async () => {
+    const db = await getDB();
+    await db.query('DELETE FROM hetzner_cost_snapshots');
+    await db.query(
+      `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, fetched_at)
+       VALUES ('b1', 50, 'USD', '{}', '{}', '[]', '2026-09-09T02:00:00Z'),
+              ('b2', 60, 'USD', '{}', '{}', '[]', '2026-09-10T02:00:00Z')`
+    );
+
+    const points = await getHetznerCostHistory(30);
+
+    expect(points.map(p => p.total_monthly)).toEqual([50, 60]);
+  });
+
+  it('excludes snapshots older than the requested window', async () => {
+    const db = await getDB();
+    await db.query('DELETE FROM hetzner_cost_snapshots');
+    await db.query(
+      `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, fetched_at)
+       VALUES ('old', 999, 'USD', '{}', '{}', '[]', now() - interval '400 days'),
+              ('new', 123, 'USD', '{}', '{}', '[]', now())`
+    );
+
+    const points = await getHetznerCostHistory(30);
+
+    expect(points).toHaveLength(1);
+    expect(points[0].total_monthly).toBeCloseTo(123, 2);
   });
 });
 

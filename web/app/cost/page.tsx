@@ -584,6 +584,120 @@ interface HetznerSpend {
 
 const UNPRICED_PREVIEW_COUNT = 3;
 
+interface HetznerHistoryPoint { day: string; total_monthly: number; currency: string }
+
+/** Run-rate over time — deliberately NOT "spend history".
+ *
+ * Azure's chart plots what was spent, and it moves as resources are consumed.
+ * This plots what the infrastructure costs per month as measured each day: it
+ * is flat while the fleet is unchanged and steps when a server or volume is
+ * added or removed. Labelling it "spend" would repeat exactly the
+ * billed-vs-estimated confusion the rest of this view works to avoid.
+ *
+ * It also cannot be backfilled — Hetzner exposes no spend history — so the
+ * line starts the day the first snapshot was taken and fills in from there.
+ * Below MIN_HISTORY_POINTS it shows the same honest placeholder the Azure
+ * chart uses rather than a near-empty chart that reads as broken. */
+function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string }) {
+  const [span, setSpan] = useState<number>(SPAN_OPTIONS[0].days);
+  const [points, setPoints] = useState<HetznerHistoryPoint[]>([]);
+  const [currency, setCurrency] = useState(fallbackCurrency);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setLoading(true);
+    setError('');
+    fetch(`/api/cost/hetzner/history?days=${span}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d?.error) { setError(d.error); setLoading(false); return; }
+        setPoints(Array.isArray(d?.points) ? d.points : []);
+        if (d?.currency) setCurrency(d.currency);
+        setLoading(false);
+      })
+      .catch(e => { setError(String(e)); setLoading(false); });
+  }, [span]);
+
+  // Step change across the window — the meaningful delta for a run rate is
+  // "did the fleet get more expensive", not a sum of daily values.
+  const first = points[0]?.total_monthly;
+  const last = points[points.length - 1]?.total_monthly;
+  const delta = first && last && first > 0 ? ((last - first) / first) * 100 : null;
+
+  return (
+    <div className="glass" style={{ borderRadius: 10, padding: '18px 20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Run Rate History — monthly rate, as measured each day
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {SPAN_OPTIONS.map(opt => (
+            <button key={opt.days} onClick={() => setSpan(opt.days)} style={{
+              padding: '3px 10px', fontSize: 10, fontWeight: 700, borderRadius: 999, cursor: 'pointer',
+              background: span === opt.days ? ACCENT : 'transparent',
+              border: `1px solid ${span === opt.days ? ACCENT : 'var(--border)'}`,
+              color: span === opt.days ? '#fff' : 'var(--muted)',
+            }}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {!loading && !error && last != null && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Current run rate</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 2 }}>
+            <span style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+              {last.toLocaleString(undefined, { style: 'currency', currency })}
+            </span>
+            {delta !== null && Math.abs(delta) >= 0.01 && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: delta >= 0 ? WARN : GOOD }}>
+                {delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)}% across this range
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {loading && <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 32 }}>Loading…</div>}
+      {!loading && error && <div style={{ fontSize: 12, color: CRIT, textAlign: 'center', padding: 32 }}>⚠ {error}</div>}
+
+      {!loading && !error && points.length < MIN_HISTORY_POINTS && (
+        <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--muted)', fontSize: 12 }}>
+          Accumulating run-rate history — check back in a few days.<br />
+          <span style={{ fontSize: 11 }}>
+            {points.length} day{points.length === 1 ? '' : 's'} recorded so far. Hetzner exposes no spend history, so this cannot be backfilled.
+          </span>
+        </div>
+      )}
+
+      {!loading && !error && points.length >= MIN_HISTORY_POINTS && (
+        <ResponsiveContainer width="100%" height={200}>
+          <AreaChart data={points} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+            <defs>
+              <linearGradient id="hetznerRunRateFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={ACCENT} stopOpacity={0.3} />
+                <stop offset="100%" stopColor={ACCENT} stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
+            <XAxis dataKey="day" tickFormatter={shortDate} tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false}
+              tickFormatter={v => v.toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: 0 })} />
+            <Tooltip
+              contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11 }}
+              labelFormatter={shortDate}
+              formatter={(v: number) => [v.toLocaleString(undefined, { style: 'currency', currency }), 'Run rate/mo']}
+            />
+            <Area type="stepAfter" dataKey="total_monthly" stroke={ACCENT} strokeWidth={2} fill="url(#hetznerRunRateFill)" dot={false} />
+          </AreaChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
 function HetznerSpendView() {
   const [data, setData] = useState<HetznerSpend | null>(null);
   const [loading, setLoading] = useState(true);
@@ -726,6 +840,7 @@ function HetznerSpendView() {
           </div>
         )}
       </div>
+      <HetznerRunRateChart fallbackCurrency={data.currency} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <BreakdownCard title="By Category" rows={cat} total={data.totalMonthly} currency={data.currency} color={ACCENT} />
         <BreakdownCard title="By Server Type" rows={types} total={serversSubtotal} currency={data.currency} color={WARN} />

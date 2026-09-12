@@ -662,6 +662,44 @@ export interface HetznerCostSnapshot {
  * excluded from totalMonthly. Persisting it — rather than dropping it here —
  * is what lets the API and UI surface a pricing gap instead of it silently
  * becoming an understated $0-inclusive total. */
+export interface HetznerCostHistoryPoint {
+  day: string;            // YYYY-MM-DD
+  total_monthly: number;
+  currency: string;
+}
+
+/** One run-rate point per calendar day, oldest first.
+ *
+ * Deliberately NOT the same thing as Azure's cost_snapshot_history: that
+ * records what was *spent*, this records what the infrastructure *costs per
+ * month* as measured on that day. It moves when a server is added or removed,
+ * not when something is consumed — so the chart it feeds is labelled a run
+ * rate, never spend.
+ *
+ * Refreshes fire several times a day (the Refresh button plus the scheduler),
+ * so the raw table holds many rows per day. DISTINCT ON keeps the last
+ * measurement of each day; without it the line shows vertical clusters that
+ * read as volatility where there is none. */
+export async function getHetznerCostHistory(days: number): Promise<HetznerCostHistoryPoint[]> {
+  const db = await getDB();
+  const { rows } = await db.query(
+    // Bucket by UTC date explicitly, not `fetched_at::date` — that casts in
+    // the server's local timezone, so the same rows bucket into different
+    // days depending on which machine runs the query, and a late-evening
+    // refresh east of UTC lands on tomorrow. Same fix as 68be4ca applied to
+    // the Azure cost buckets.
+    `SELECT DISTINCT ON ((fetched_at AT TIME ZONE 'UTC')::date)
+       to_char((fetched_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS day,
+       total_monthly,
+       currency
+     FROM hetzner_cost_snapshots
+     WHERE fetched_at >= now() - ($1 || ' days')::interval
+     ORDER BY (fetched_at AT TIME ZONE 'UTC')::date ASC, fetched_at DESC`,
+    [days]
+  );
+  return rows;
+}
+
 export async function saveHetznerCostSnapshot(data: { totalMonthly: number; currency: string; byCategory: unknown; byType: unknown; unpriced?: unknown }): Promise<void> {
   const db = await getDB();
   await db.query(
