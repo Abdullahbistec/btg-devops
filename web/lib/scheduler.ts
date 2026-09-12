@@ -1,6 +1,7 @@
-import { getDB, hasCostSnapshotHistoryRow, hasBackfillRequestToday, createCostBackfillRequest, completeCostFetchRequest, failCostFetchRequest, getStaleRunningAudits, failAudit } from '@/lib/db';
+import { getDB, hasCostSnapshotHistoryRow, hasBackfillRequestToday, createCostBackfillRequest, completeCostFetchRequest, failCostFetchRequest, getStaleRunningAudits, failAudit, getHetznerCostSnapshot, saveHetznerCostSnapshot } from '@/lib/db';
 import { executeAudit } from '@/lib/audit-executor';
 import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
+import { runHetznerCostReport } from '@/lib/btg-runner';
 import { computeNextRun, toUtcTimestamp, NOW_UTC_SQL } from '@/lib/schedule-time';
 
 const POLL_INTERVAL_MS = 60_000;
@@ -91,6 +92,34 @@ async function runDailyCostRefresh() {
   }
 }
 
+/** Hetzner's counterpart to runDailyCostRefresh, run alongside it so a
+ * deployment with no one clicking Refresh still accumulates Hetzner
+ * snapshots too. Hetzner has no subscription concept — one project token
+ * (HCLOUD_TOKEN), one global snapshot row — so instead of a per-subscription
+ * cost_snapshot_history table this just checks the existing snapshot's own
+ * fetched_at date. Kept fully separate from runDailyCostRefresh (own
+ * try/catch, called via Promise.allSettled below) so a Hetzner failure
+ * (e.g. HCLOUD_TOKEN not configured) can never suppress the Azure refresh,
+ * nor the reverse. */
+async function runDailyHetznerCostRefresh() {
+  try {
+    const existing = await getHetznerCostSnapshot();
+    const today = new Date().toISOString().slice(0, 10);
+    if (existing && new Date(existing.fetched_at).toISOString().slice(0, 10) === today) return;
+
+    console.log('[scheduler] running daily Hetzner cost refresh');
+    const report = await runHetznerCostReport();
+    await saveHetznerCostSnapshot({
+      totalMonthly: report.totalMonthly,
+      currency: report.currency,
+      byCategory: report.byCategory,
+      byType: report.byType,
+    });
+  } catch (e) {
+    console.error('[scheduler] daily Hetzner cost refresh failed:', e);
+  }
+}
+
 /** Retries backfilling closed months once per calendar day per subscription
  * if the last attempt didn't fully succeed. backfillCostHistory() already
  * skips any month that already has its end-of-month row (see
@@ -170,13 +199,26 @@ export function startScheduler() {
   console.log('[scheduler] started, polling every 60s for due schedules');
   setInterval(() => {
     runDueSchedules().catch(e => console.error('[scheduler] poll cycle failed:', e));
-    runDailyCostRefresh().catch(e => console.error('[scheduler] daily cost refresh poll failed:', e));
+    // Azure and Hetzner are independent — one failing must not skip the
+    // other, so these are settled separately rather than awaited in
+    // sequence. Both functions already catch their own errors internally,
+    // so allSettled here is belt-and-suspenders against anything escaping
+    // that.
+    Promise.allSettled([runDailyCostRefresh(), runDailyHetznerCostRefresh()])
+      .then(([azure, hetzner]) => {
+        if (azure.status === 'rejected') console.error('[scheduler] daily cost refresh poll failed:', azure.reason);
+        if (hetzner.status === 'rejected') console.error('[scheduler] daily Hetzner cost refresh poll failed:', hetzner.reason);
+      });
     runDailyBackfillHeal().catch(e => console.error('[scheduler] daily backfill heal poll failed:', e));
     healStaleAudits().catch(e => console.error('[scheduler] stale audit heal poll failed:', e));
   }, POLL_INTERVAL_MS);
   // Also do an immediate check on startup rather than waiting a full interval.
   runDueSchedules().catch(e => console.error('[scheduler] initial poll failed:', e));
-  runDailyCostRefresh().catch(e => console.error('[scheduler] initial daily cost refresh failed:', e));
+  Promise.allSettled([runDailyCostRefresh(), runDailyHetznerCostRefresh()])
+    .then(([azure, hetzner]) => {
+      if (azure.status === 'rejected') console.error('[scheduler] initial daily cost refresh failed:', azure.reason);
+      if (hetzner.status === 'rejected') console.error('[scheduler] initial daily Hetzner cost refresh failed:', hetzner.reason);
+    });
   runDailyBackfillHeal().catch(e => console.error('[scheduler] initial daily backfill heal failed:', e));
   healStaleAudits().catch(e => console.error('[scheduler] initial stale audit heal failed:', e));
 }

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   getDB, getSubscription, createCostFetchRequest, createCostBackfillRequest, getPendingCostFetchRequestFor,
-  completeCostFetchRequest, failCostFetchRequest,
+  completeCostFetchRequest, failCostFetchRequest, saveHetznerCostSnapshot,
 } from '@/lib/db';
 import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
+import { runHetznerCostReport } from '@/lib/btg-runner';
 import { isAdminRequest } from '@/lib/auth';
 
 function backfillNote(saved: number, skipped: number, errors: string[]): string | undefined {
@@ -36,6 +37,31 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
+
+    // Optional `provider`, defaulting to 'azure' so every existing caller
+    // (the Refresh button, the scheduled-audit cron script) that sends no
+    // provider at all is completely unaffected. Hetzner has no subscription
+    // concept — a single project token (HCLOUD_TOKEN) covers the whole
+    // account, priced from Hetzner's own pricing API rather than a live
+    // spend query — so it bypasses the subscription lookup and the
+    // cost_fetch_requests bookkeeping below entirely, which are both keyed
+    // by subscription_id.
+    const provider: 'azure' | 'hetzner' = body?.provider === 'hetzner' ? 'hetzner' : 'azure';
+    if (provider === 'hetzner') {
+      try {
+        const report = await runHetznerCostReport();
+        await saveHetznerCostSnapshot({
+          totalMonthly: report.totalMonthly,
+          currency: report.currency,
+          byCategory: report.byCategory,
+          byType: report.byType,
+        });
+        return NextResponse.json({ status: 'done' }, { status: 202 });
+      } catch (e) {
+        return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+      }
+    }
+
     const db = await getDB();
     const activeRes = await db.query("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1");
     const subscriptionId: string = body?.subscriptionId || (activeRes.rows[0] as { id: string } | undefined)?.id || '';

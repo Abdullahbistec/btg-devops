@@ -272,6 +272,56 @@ export async function runSingleCommand(
   };
 }
 
+export interface HetznerCostResult {
+  currency: string;
+  totalMonthly: number;
+  byCategory: Record<string, number>;
+  byType: Record<string, { count: number; monthly_total: number }>;
+  unpriced?: string[];
+  estimate: boolean;
+  note: string;
+}
+
+interface RawHetznerCostReport {
+  currency?: string;
+  total_monthly?: number;
+  by_category?: Record<string, number>;
+  by_type?: Record<string, { count: number; monthly_total: number }>;
+  unpriced?: string[];
+  estimate?: boolean;
+  note?: string;
+}
+
+/**
+ * Runs `analyze hetzner-cost` and parses its cost-report shape directly.
+ *
+ * This deliberately does NOT go through runSingleCommand: that function
+ * parses `{ findings: [], summary: {} }` and maps findings, but
+ * hetzner-cost's output is a completely different shape —
+ * `{ currency, total_monthly, by_category, by_type, unpriced, estimate,
+ * note }`. Routing it through runSingleCommand would parse successfully,
+ * find no `findings` array, and silently return zero findings instead of
+ * erroring — the cost data would just be dropped.
+ *
+ * Hetzner auth is the single HCLOUD_TOKEN env var, not the Azure
+ * service-principal set — mirrors the isHetznerCommand branch in
+ * runSingleCommand above.
+ */
+export async function runHetznerCostReport(hcloudToken?: string): Promise<HetznerCostResult> {
+  const env: Record<string, string> = { HCLOUD_TOKEN: hcloudToken || process.env.HCLOUD_TOKEN || '' };
+  const stdout = await runCommand('hetzner-cost', env);
+  const parsed: RawHetznerCostReport = JSON.parse(stdout);
+  return {
+    currency: parsed.currency || 'EUR',
+    totalMonthly: parsed.total_monthly ?? 0,
+    byCategory: parsed.by_category || {},
+    byType: parsed.by_type || {},
+    unpriced: parsed.unpriced,
+    estimate: parsed.estimate ?? true,
+    note: parsed.note || '',
+  };
+}
+
 export async function runAllCommands(
   commands: Command[],
   credentials: Credentials,
