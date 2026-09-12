@@ -682,16 +682,11 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
         <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 12 }}>{backfillNote}</div>
       )}
 
-      {/* Stated inline, never a tooltip. A reconstructed point is derived from
-          resource creation dates, not observed — and it understates any day on
-          which something now-deleted was still running. A reader must be able
-          to see which half of the line is which. */}
-      {!loading && !error && reconstructedCount > 0 && (
-        <div style={{ fontSize: 11, color: WARN, marginBottom: 12, lineHeight: 1.5 }}>
-          {reconstructedCount} of {points.length} days are reconstructed from resource creation dates at today&apos;s prices —
-          resources deleted before today are invisible, so those days are understated.
-        </div>
-      )}
+      {/* The reconstructed-days caveat banner was removed at the owner's
+          request. The distinction still exists in the data — each point
+          carries `reconstructed`, and the API returns it — so it can be
+          surfaced again (as a quieter footnote, or per-point in the tooltip)
+          without any backend change. */}
 
       {!loading && !error && last != null && (
         <div style={{ marginBottom: 16 }}>
@@ -864,10 +859,12 @@ function HetznerSpendView() {
           {data.totalMonthly.toLocaleString(undefined, { style: 'currency', currency: data.currency })}
           <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)', marginLeft: 8 }}>/month</span>
         </div>
-        {/* Stated inline, never a tooltip: this number is not a bill and a
-            reader must not be able to miss that. */}
-        <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 8, lineHeight: 1.5 }}>
-          List-price estimate from Hetzner&apos;s pricing API, not a bill — Hetzner exposes no invoice endpoint.
+        {/* The "not a bill" caveat banner was removed at the owner's request.
+            The API still returns `estimate: true` with this figure, and the
+            Claude analysis context still carries the qualifier in words, so
+            the distinction survives everywhere except this panel. */}
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+          Estimated from list prices
         </div>
         {unpriced.length > 0 && (
           // Deliberately loud, not a tooltip: a pricing miss must never look
