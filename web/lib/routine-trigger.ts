@@ -11,13 +11,24 @@ export type DrainResult = 'skipped-disabled' | 'skipped-running' | 'skipped-erro
  * that hits a permission prompt blocks forever instead of draining. */
 const ALLOWED_TOOLS = 'mcp__btg-devops__*';
 
+// The summary instruction asks for risk AND cost deliberately. It used to say
+// only "executive risk summary", and the agent duly ranked everything by
+// severity and never mentioned money — correct behaviour for what it was
+// asked, but it meant the cost signal in the context (see
+// web/lib/analysisContext.ts) was delivered and then ignored. A context field
+// nothing in the prompt refers to may as well not be there.
 const DRAIN_PROMPT =
   'Drain the dashboard request queues via the btg-devops MCP tools, without asking any clarifying questions. ' +
   'First call list_pending_requests. For each pending request, call get_audit_data with its request_id, ' +
-  'write a 3-5 sentence executive risk summary of the findings context returned, then call save_analysis with ' +
-  'that request_id and your summary — or an error message instead of a summary if the analysis could not be ' +
-  'completed. Then call list_pending_cost_requests and call fetch_cost_data for each pending request; that tool ' +
-  'does the whole refresh itself, so nothing further is needed for those. ' +
+  'then write a 3-5 sentence executive summary of the findings context returned, weighing BOTH security risk ' +
+  'and cost. The context may include a monthly run rate and per-finding monthly costs; when it does, say what ' +
+  'the infrastructure costs and call out the findings with real money attached, including what fixing one would ' +
+  'save. Quote any cost figure with the qualifier the context gives it — a run rate labelled a list-price ' +
+  'estimate is not a bill and must never be presented as one. If the context carries no cost data at all, write ' +
+  'a risk-only summary and do not invent figures. Then call save_analysis with that request_id and your summary ' +
+  '— or an error message instead of a summary if the analysis could not be completed. Then call ' +
+  'list_pending_cost_requests and call fetch_cost_data for each pending request; that tool does the whole ' +
+  'refresh itself, so nothing further is needed for those. ' +
   'If either list returns zero pending requests, that is a normal successful outcome — finish immediately and ' +
   'do not fabricate anything.';
 
