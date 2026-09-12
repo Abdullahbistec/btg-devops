@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
-import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory, getStaleRunningAudits, saveHetznerCostSnapshot, getHetznerCostSnapshot, getHetznerCostHistory , saveHetznerReconstructedHistory} from './db';
+import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory, getStaleRunningAudits, saveHetznerCostSnapshot, getHetznerCostSnapshot, getHetznerCostHistory , saveHetznerReconstructedHistory, hasMeasuredHetznerSnapshotToday} from './db';
 
 /** Refuses to run destructive setup against anything that isn't clearly a
  * disposable test database — same intent as the old SQLite guard (which
@@ -312,6 +312,43 @@ describe('getStaleRunningAudits', () => {
 
     const stale = await getStaleRunningAudits(12);
     expect(stale).toHaveLength(0);
+  });
+});
+
+describe('hasMeasuredHetznerSnapshotToday', () => {
+  it('is false when today only has a reconstructed row', async () => {
+    const db = await getDB();
+    await db.query('DELETE FROM hetzner_cost_snapshots');
+    await db.query(
+      `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, reconstructed, fetched_at)
+       VALUES ('recon-today', 100, 'USD', '{}', '{}', '[]', true, now())`
+    );
+
+    // A derived figure must never satisfy the daily-refresh guard, or the
+    // scheduler skips and today stays reconstructed forever.
+    expect(await hasMeasuredHetznerSnapshotToday()).toBe(false);
+  });
+
+  it('is true once a measured row exists for today', async () => {
+    const db = await getDB();
+    await db.query('DELETE FROM hetzner_cost_snapshots');
+    await db.query(
+      `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, reconstructed, fetched_at)
+       VALUES ('measured-today', 100, 'USD', '{}', '{}', '[]', false, now())`
+    );
+
+    expect(await hasMeasuredHetznerSnapshotToday()).toBe(true);
+  });
+
+  it('is false when the only measured row is from a previous day', async () => {
+    const db = await getDB();
+    await db.query('DELETE FROM hetzner_cost_snapshots');
+    await db.query(
+      `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, reconstructed, fetched_at)
+       VALUES ('measured-old', 100, 'USD', '{}', '{}', '[]', false, now() - interval '2 days')`
+    );
+
+    expect(await hasMeasuredHetznerSnapshotToday()).toBe(false);
   });
 });
 

@@ -670,6 +670,24 @@ export interface HetznerCostHistoryPoint {
   reconstructed: boolean;
 }
 
+/** Whether a MEASURED Hetzner snapshot exists for today (UTC).
+ *
+ * The daily scheduler guard must ask this rather than "is there any snapshot
+ * today". A reconstructed row is derived from creation dates, not observed —
+ * if it satisfied the guard, a backfill run before the day's first refresh
+ * would make the scheduler skip, and today would stay derived permanently.
+ * An observation must always be allowed to replace a replay of one. */
+export async function hasMeasuredHetznerSnapshotToday(): Promise<boolean> {
+  const db = await getDB();
+  const { rows } = await db.query(
+    `SELECT 1 FROM hetzner_cost_snapshots
+     WHERE COALESCE(reconstructed, false) = false
+       AND (fetched_at AT TIME ZONE 'UTC')::date = (now() AT TIME ZONE 'UTC')::date
+     LIMIT 1`
+  );
+  return rows.length > 0;
+}
+
 /** Writes reconstructed past run-rate points, one row per day.
  *
  * These are DERIVED, not observed: the CLI reconstructs them by replaying

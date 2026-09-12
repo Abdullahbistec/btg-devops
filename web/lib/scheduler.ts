@@ -1,4 +1,4 @@
-import { getDB, hasCostSnapshotHistoryRow, hasBackfillRequestToday, createCostBackfillRequest, completeCostFetchRequest, failCostFetchRequest, getStaleRunningAudits, failAudit, getHetznerCostSnapshot, saveHetznerCostSnapshot } from '@/lib/db';
+import { getDB, hasCostSnapshotHistoryRow, hasBackfillRequestToday, createCostBackfillRequest, completeCostFetchRequest, failCostFetchRequest, getStaleRunningAudits, failAudit, getHetznerCostSnapshot, saveHetznerCostSnapshot, hasMeasuredHetznerSnapshotToday } from '@/lib/db';
 import { executeAudit } from '@/lib/audit-executor';
 import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
 import { runHetznerCostReport } from '@/lib/btg-runner';
@@ -103,9 +103,12 @@ async function runDailyCostRefresh() {
  * nor the reverse. */
 async function runDailyHetznerCostRefresh() {
   try {
-    const existing = await getHetznerCostSnapshot();
-    const today = new Date().toISOString().slice(0, 10);
-    if (existing && new Date(existing.fetched_at).toISOString().slice(0, 10) === today) return;
+    // Asks specifically for a MEASURED row, not any row. A reconstructed
+    // snapshot is derived from resource creation dates, so letting one
+    // satisfy this guard would mean a backfill run before the day's first
+    // refresh makes the scheduler skip — leaving today permanently derived
+    // when it could have been observed.
+    if (await hasMeasuredHetznerSnapshotToday()) return;
 
     console.log('[scheduler] running daily Hetzner cost refresh');
     const report = await runHetznerCostReport();
