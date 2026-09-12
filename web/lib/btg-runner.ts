@@ -171,12 +171,13 @@ export function extractCurrency(raw: RawFinding): string | null {
 function runCommand(
   command: string,
   env: Record<string, string>,
-  timeoutMs = 1200000
+  timeoutMs = 1200000,
+  extraArgs: string[] = []
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       BTG_PATH,
-      ['analyze', command, '--output', 'json'],
+      ['analyze', command, '--output', 'json', ...extraArgs],
       { env: { ...process.env, ...env }, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err) {
@@ -351,6 +352,24 @@ export async function runHetznerCostReport(hcloudToken?: string): Promise<Hetzne
   const env: Record<string, string> = { HCLOUD_TOKEN: hcloudToken || process.env.HCLOUD_TOKEN || '' };
   const stdout = await runCommand('hetzner-cost', env);
   return parseHetznerCostReport(stdout);
+}
+
+export interface HetznerReconstructedPoint { day: string; total_monthly: number; currency: string }
+
+/** Runs the CLI's run-rate reconstruction, replaying resource creation dates
+ * against today's list prices to derive past days.
+ *
+ * This exists because Hetzner has no spend history to fetch — without it the
+ * chart is empty until enough days accumulate naturally. The figures are
+ * derived, not observed, and are stored flagged as such. */
+export async function runHetznerCostHistory(days: number, hcloudToken?: string): Promise<HetznerReconstructedPoint[]> {
+  const env: Record<string, string> = { HCLOUD_TOKEN: hcloudToken || process.env.HCLOUD_TOKEN || '' };
+  const stdout = await runCommand('hetzner-cost', env, 1200000, ['--history-days', String(days)]);
+  const parsed = JSON.parse(stdout) as { history?: HetznerReconstructedPoint[] };
+  if (!Array.isArray(parsed.history)) {
+    throw new Error('hetzner-cost: --history-days produced no "history" array');
+  }
+  return parsed.history;
 }
 
 export async function runAllCommands(

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -36,6 +37,7 @@ type HetznerCostReport struct {
 	Unpriced     []string                   `json:"unpriced,omitempty"`
 	Estimate     bool                       `json:"estimate"`
 	Note         string                     `json:"note"`
+	History      []HetznerCostHistoryPoint `json:"history,omitempty"`
 }
 
 // Hetzner Cloud API types (GET /primary_ips)
@@ -44,11 +46,14 @@ type hetznerPrimaryIPsResponse struct {
 	Meta       hetznerMeta        `json:"meta"`
 }
 
+var flagHetznerHistoryDays int
+
 type hetznerPrimaryIP struct {
 	ID         int               `json:"id"`
 	Name       string            `json:"name"`
 	Type       string            `json:"type"`
 	Datacenter hetznerDatacenter `json:"datacenter"`
+	Created    string            `json:"created"`
 }
 
 // ---------- report building ----------
@@ -140,6 +145,7 @@ func init() {
 	analyzeCmd.AddCommand(hetznerCostCmd)
 	hetznerCostCmd.Flags().StringVar(&flagHetznerToken, "token", "", "Hetzner Cloud API token (overrides HCLOUD_TOKEN env var)")
 	hetznerCostCmd.Flags().StringVar(&flagOutput, "output", "table", "Output format: table or json")
+	hetznerCostCmd.Flags().IntVar(&flagHetznerHistoryDays, "history-days", 0, "Also reconstruct N days of past run rate from resource creation dates (JSON output only)")
 }
 
 func runHetznerCost(cmd *cobra.Command, args []string) error {
@@ -192,7 +198,14 @@ func computeHetznerCostReport(ctx context.Context, token string) (HetznerCostRep
 	}
 
 	fmt.Fprintf(os.Stderr, "Pricing %d server(s), %d volume(s), %d primary IP(s)...\n", len(servers), len(volumes), len(ips))
-	return hetznerCostReport(servers, volumes, ips, pricing), nil
+	report := hetznerCostReport(servers, volumes, ips, pricing)
+
+	if flagHetznerHistoryDays > 0 {
+		fmt.Fprintf(os.Stderr, "Reconstructing %d day(s) of run rate from resource creation dates...\n", flagHetznerHistoryDays)
+		report.History = hetznerCostHistory(servers, volumes, ips, pricing, time.Now().UTC(), flagHetznerHistoryDays)
+	}
+
+	return report, nil
 }
 
 // ---------- API access ----------

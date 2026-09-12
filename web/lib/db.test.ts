@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
-import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory, getStaleRunningAudits, saveHetznerCostSnapshot, getHetznerCostSnapshot, getHetznerCostHistory } from './db';
+import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory, getStaleRunningAudits, saveHetznerCostSnapshot, getHetznerCostSnapshot, getHetznerCostHistory , saveHetznerReconstructedHistory} from './db';
 
 /** Refuses to run destructive setup against anything that isn't clearly a
  * disposable test database — same intent as the old SQLite guard (which
@@ -315,6 +315,41 @@ describe('getStaleRunningAudits', () => {
   });
 });
 
+describe('saveHetznerReconstructedHistory', () => {
+  it('writes one flagged row per day and is idempotent across re-runs', async () => {
+    const db = await getDB();
+    await db.query('DELETE FROM hetzner_cost_snapshots');
+
+    const points = [
+      { day: '2026-09-01', total_monthly: 100, currency: 'USD' },
+      { day: '2026-09-02', total_monthly: 120, currency: 'USD' },
+    ];
+    await saveHetznerReconstructedHistory(points);
+    await saveHetznerReconstructedHistory(points); // re-running must not duplicate
+
+    const { rows } = await db.query('SELECT reconstructed FROM hetzner_cost_snapshots');
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r: { reconstructed: boolean }) => r.reconstructed)).toBe(true);
+  });
+
+  it('never overwrites a measured snapshot with a reconstructed one', async () => {
+    const db = await getDB();
+    await db.query('DELETE FROM hetzner_cost_snapshots');
+    // A real measurement taken on 2026-09-01.
+    await db.query(
+      `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, reconstructed, fetched_at)
+       VALUES ('measured', 999, 'USD', '{}', '{}', '[]', false, '2026-09-01T12:00:00Z')`
+    );
+
+    await saveHetznerReconstructedHistory([{ day: '2026-09-01', total_monthly: 100, currency: 'USD' }]);
+
+    // A derived figure must never displace something actually observed.
+    const points = await getHetznerCostHistory(3650);
+    const sept1 = points.find(p => p.day === '2026-09-01');
+    expect(sept1?.total_monthly).toBeCloseTo(999, 2);
+  });
+});
+
 describe('getHetznerCostHistory', () => {
   // Refreshes run several times a day (the Refresh button plus the daily
   // scheduler), so the raw table holds many rows per day. A run-rate chart
@@ -336,6 +371,24 @@ describe('getHetznerCostHistory', () => {
 
     expect(points).toHaveLength(2);
     expect(points[1].total_monthly).toBeCloseTo(222, 2);
+  });
+
+  // Regression: the SELECT once omitted this column entirely, so every point
+  // came back with reconstructed === undefined and the UI counted 179 derived
+  // days as measured. The data was right; the projection was not.
+  it('reports whether each point was measured or reconstructed', async () => {
+    const db = await getDB();
+    await db.query('DELETE FROM hetzner_cost_snapshots');
+    await db.query(
+      `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, reconstructed, fetched_at)
+       VALUES ('r1', 10, 'USD', '{}', '{}', '[]', true,  '2026-09-05T12:00:00Z'),
+              ('m1', 20, 'USD', '{}', '{}', '[]', false, '2026-09-06T12:00:00Z')`
+    );
+
+    const points = await getHetznerCostHistory(3650);
+
+    expect(points.find(p => p.day === '2026-09-05')?.reconstructed).toBe(true);
+    expect(points.find(p => p.day === '2026-09-06')?.reconstructed).toBe(false);
   });
 
   it('returns points oldest first, so a chart can plot them directly', async () => {

@@ -245,6 +245,7 @@ async function initSchema(pool: Pool): Promise<void> {
     ALTER TABLE schedules ADD COLUMN IF NOT EXISTS times_per_day INTEGER DEFAULT 1;
 
     ALTER TABLE hetzner_cost_snapshots ADD COLUMN IF NOT EXISTS unpriced TEXT DEFAULT '[]';
+    ALTER TABLE hetzner_cost_snapshots ADD COLUMN IF NOT EXISTS reconstructed BOOLEAN DEFAULT false;
   `);
 
   // Seed default subscription from env vars if the table is empty — same
@@ -666,6 +667,39 @@ export interface HetznerCostHistoryPoint {
   day: string;            // YYYY-MM-DD
   total_monthly: number;
   currency: string;
+  reconstructed: boolean;
+}
+
+/** Writes reconstructed past run-rate points, one row per day.
+ *
+ * These are DERIVED, not observed: the CLI reconstructs them by replaying
+ * resource creation dates against today's list prices, because Hetzner
+ * exposes no spend history to fetch. They are flagged `reconstructed` so the
+ * chart can draw them distinctly and a reader is never told a derived figure
+ * was measured.
+ *
+ * Two rules this enforces:
+ *   - Idempotent. Re-running a backfill must not duplicate days.
+ *   - A reconstruction never displaces a real measurement. If a measured row
+ *     already exists for a day, the derived one for that day is skipped
+ *     entirely — an actual observation always outranks a replay of it.
+ */
+export async function saveHetznerReconstructedHistory(
+  points: { day: string; total_monthly: number; currency: string }[]
+): Promise<void> {
+  if (points.length === 0) return;
+  const db = await getDB();
+  for (const p of points) {
+    await db.query(
+      `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, reconstructed, fetched_at)
+       SELECT $1, $2, $3, '{}', '{}', '[]', true, ($4 || 'T12:00:00Z')::timestamptz
+       WHERE NOT EXISTS (
+         SELECT 1 FROM hetzner_cost_snapshots
+         WHERE (fetched_at AT TIME ZONE 'UTC')::date = $4::date
+       )`,
+      [uuidv4(), p.total_monthly, p.currency, p.day]
+    );
+  }
 }
 
 /** One run-rate point per calendar day, oldest first.
@@ -691,7 +725,8 @@ export async function getHetznerCostHistory(days: number): Promise<HetznerCostHi
     `SELECT DISTINCT ON ((fetched_at AT TIME ZONE 'UTC')::date)
        to_char((fetched_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS day,
        total_monthly,
-       currency
+       currency,
+       COALESCE(reconstructed, false) AS reconstructed
      FROM hetzner_cost_snapshots
      WHERE fetched_at >= now() - ($1 || ' days')::interval
      ORDER BY (fetched_at AT TIME ZONE 'UTC')::date ASC, fetched_at DESC`,

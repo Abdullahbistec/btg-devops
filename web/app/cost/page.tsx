@@ -584,7 +584,7 @@ interface HetznerSpend {
 
 const UNPRICED_PREVIEW_COUNT = 3;
 
-interface HetznerHistoryPoint { day: string; total_monthly: number; currency: string }
+interface HetznerHistoryPoint { day: string; total_monthly: number; currency: string; reconstructed: boolean }
 
 /** Run-rate over time — deliberately NOT "spend history".
  *
@@ -604,8 +604,10 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
   const [currency, setCurrency] = useState(fallbackCurrency);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillNote, setBackfillNote] = useState('');
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setLoading(true);
     setError('');
     fetch(`/api/cost/hetzner/history?days=${span}`)
@@ -618,6 +620,30 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
       })
       .catch(e => { setError(String(e)); setLoading(false); });
   }, [span]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function runBackfill() {
+    setBackfilling(true);
+    setBackfillNote('');
+    try {
+      const res = await fetch('/api/cost/hetzner/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: span }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error || 'Backfill failed');
+      setBackfillNote(`Reconstructed ${body.reconstructed} day(s) from resource creation dates.`);
+      load();
+    } catch (e) {
+      setBackfillNote(`⚠ ${(e as Error).message}`);
+    } finally {
+      setBackfilling(false);
+    }
+  }
+
+  const reconstructedCount = points.filter(p => p.reconstructed).length;
 
   // Step change across the window — the meaningful delta for a run rate is
   // "did the fleet get more expensive", not a sum of daily values.
@@ -642,8 +668,30 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
               {opt.label}
             </button>
           ))}
+          <button onClick={runBackfill} disabled={backfilling} style={{
+            padding: '3px 10px', fontSize: 10, fontWeight: 700, borderRadius: 999,
+            background: 'transparent', border: `1px solid ${ACCENT}`, color: ACCENT,
+            cursor: backfilling ? 'default' : 'pointer', opacity: backfilling ? 0.6 : 1,
+          }}>
+            {backfilling ? '⟳ Reconstructing…' : '↻ Reconstruct history'}
+          </button>
         </div>
       </div>
+
+      {backfillNote && (
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 12 }}>{backfillNote}</div>
+      )}
+
+      {/* Stated inline, never a tooltip. A reconstructed point is derived from
+          resource creation dates, not observed — and it understates any day on
+          which something now-deleted was still running. A reader must be able
+          to see which half of the line is which. */}
+      {!loading && !error && reconstructedCount > 0 && (
+        <div style={{ fontSize: 11, color: WARN, marginBottom: 12, lineHeight: 1.5 }}>
+          {reconstructedCount} of {points.length} days are reconstructed from resource creation dates at today&apos;s prices —
+          resources deleted before today are invisible, so those days are understated.
+        </div>
+      )}
 
       {!loading && !error && last != null && (
         <div style={{ marginBottom: 16 }}>
