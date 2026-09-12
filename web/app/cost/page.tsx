@@ -574,12 +574,60 @@ function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId
   );
 }
 
+interface HetznerSpend {
+  totalMonthly: number; currency: string;
+  byCategory: Record<string, number>; byType: Record<string, { count: number; monthly_total: number }>;
+  fetchedAt: string; noData?: boolean; message?: string;
+}
+
+function HetznerSpendView() {
+  const [data, setData] = useState<HetznerSpend | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/cost/hetzner').then(r => r.json())
+      .then(d => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div style={{ fontSize: 12, color: 'var(--muted)', padding: 32 }}>Loading…</div>;
+  if (!data || data.noData) {
+    return <div className="glass" style={{ borderRadius: 8, padding: '24px 20px', textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
+      {data?.message ?? 'No Hetzner cost snapshot yet.'}
+    </div>;
+  }
+
+  const cat = Object.entries(data.byCategory).map(([name, cost]) => ({ name, cost }));
+  const types = Object.entries(data.byType).map(([name, v]) => ({ name: `${name} x${v.count}`, cost: v.monthly_total }));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="glass" style={{ borderRadius: 10, padding: '22px 24px' }}>
+        <div style={{ fontSize: 44, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+          {data.totalMonthly.toLocaleString(undefined, { style: 'currency', currency: data.currency })}
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)', marginLeft: 8 }}>/month</span>
+        </div>
+        {/* Stated inline, never a tooltip: this number is not a bill and a
+            reader must not be able to miss that. */}
+        <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 8, lineHeight: 1.5 }}>
+          List-price estimate from Hetzner&apos;s pricing API, not a bill — Hetzner exposes no invoice endpoint.
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <BreakdownCard title="By Category" rows={cat} total={data.totalMonthly} currency={data.currency} color={ACCENT} />
+        <BreakdownCard title="By Server Type" rows={types} total={data.totalMonthly} currency={data.currency} color={WARN} />
+      </div>
+    </div>
+  );
+}
+
 function SpendView() {
   const [data, setData] = useState<SpendData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [statusNote, setStatusNote] = useState('');
   const [error, setError] = useState('');
+  const [provider, setProvider] = useState<'azure' | 'hetzner'>('azure');
 
   function load() {
     setLoading(true);
@@ -641,6 +689,21 @@ function SpendView() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', gap: 3, marginBottom: 12 }}>
+        {(['azure', 'hetzner'] as const).map(p => (
+          <button key={p} onClick={() => setProvider(p)} style={{
+            padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 3, cursor: 'pointer',
+            background: provider === p ? 'var(--accent)' : 'transparent',
+            border: `1px solid ${provider === p ? 'var(--accent)' : 'var(--border)'}`,
+            color: provider === p ? '#fff' : 'var(--muted)',
+          }}>
+            {p === 'azure' ? 'Azure' : 'Hetzner'}
+          </button>
+        ))}
+      </div>
+
+      {provider === 'azure' && (
+      <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ fontSize: 11, color: 'var(--muted)' }}>
           {refreshing ? statusNote : data && !data.noData ? `Last refreshed: ${new Date(data.fetchedAt).toLocaleDateString()} ${new Date(data.fetchedAt).toLocaleTimeString()} · Month-to-date` : ''}
@@ -732,6 +795,10 @@ function SpendView() {
         </>
         );
       })()}
+      </>
+      )}
+
+      {provider === 'hetzner' && <HetznerSpendView />}
     </div>
   );
 }
