@@ -5,6 +5,24 @@
 **Scope:** Go CLI + MCP server (`cmd/`, `main.go`, `provider/`), Next.js API layer (`web/app/api/**`, `web/lib/**`), CI (`.github/workflows/`), secret handling.
 **Companion:** Every finding marked `PLAUSIBLE (static)` carries a *How to confirm live* note. Those notes are consolidated in the Appendix as a ready-to-run live test plan.
 
+## Remediation status (2026-09-15)
+
+Tracked by [docs/superpowers/plans/2026-09-15-security-remediation-index.md](superpowers/plans/2026-09-15-security-remediation-index.md), split into three plans (auth hardening, API hardening, dependency & supply chain).
+
+| Finding(s) | Status |
+|---|---|
+| C1, C2, C3 | ✅ Fixed — `getVerifiedIdentity()` + `getRequestRole` default to viewer; guards applied to every previously-open route. |
+| H1, H3, M1, L1 (Plan A) | ✅ Fixed — CSPRNG OTP, Postgres-backed OTP/attempt store, fail-closed `SESSION_SECRET`, gated `devOtp`, `Secure` cookies in prod. |
+| H2, M2, roadmap §5 #6–7 (Plan B) | ✅ Fixed — `apiError()` rollout, Postgres rate limiting on auth/expensive routes, zod request validation, `audit_log` table. |
+| `uuid`, `nodemailer` (Plan C Tasks 1–2) | ✅ Fixed — `uuid` removed (`node:crypto` `randomUUID`), `nodemailer` patched via `npm audit fix`. |
+| CVE-2026-75604 / Next.js (Plan C Task 3) | ✅ Fixed — Next.js 14.2.35 → 15.5.25 on its own branch, React held at 18. Production is Docker/Linux-hosted, so this specific Windows RCE didn't apply, but the other ~20 Next.js advisories `npm audit` had flagged do, regardless of OS. |
+| G1 — `govulncheck` findings (not in original review) | ✅ Fixed — see §3 below. Found while wiring up CI security gates. |
+| M3, roadmap §5 #8 (Plan C Tasks 4–5: CI SHA pinning, Dependabot, security gates) | ⚪ **Moot** — `.github/workflows/*` was removed in a separate, concurrent move to Docker-based deployment. Nothing to pin or gate. |
+| R6 (Plan C Task 6: cloud credential review) | 🔶 **Pending** — template drafted at [docs/cloud-credential-review-2026-09.md](cloud-credential-review-2026-09.md); needs someone with Azure/Hetzner/Anthropic console access to fill it in. |
+| Roadmap §5 #10, #12 (deferred) | Deliberately out of scope for this programme — see the index's "Deliberately not planned" section. |
+
+**Verified 2026-09-15:** `cd web && npm test` (208/208), `npx tsc --noEmit` (clean), `npm run build` (clean), `npm audit --audit-level=high` (0 findings), `go test ./...` (green), `govulncheck ./...` (0 reachable findings).
+
 ---
 
 ## 1. Executive summary

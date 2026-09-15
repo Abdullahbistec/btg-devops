@@ -92,11 +92,17 @@ Both should be raised as issues rather than silently dropped.
 
 ## Definition of done for the whole programme
 
-- [ ] `cd web && npm test` — green
-- [ ] `cd web && npx tsc --noEmit` — clean
-- [ ] `cd web && npm run build` — succeeds
-- [ ] `cd web && npm audit --audit-level=high` — no findings
-- [ ] `go test ./...` — green
-- [ ] `govulncheck ./...` — no findings
-- [ ] Every finding in `docs/security-static-review-2026-09.md` §3 is either fixed or has a written, dated decision not to fix
-- [ ] `docs/security-static-review-2026-09.md` updated with a "Remediation status" section pointing at this index
+- [x] `cd web && npm test` — green (208/208, verified 2026-09-15)
+- [x] `cd web && npx tsc --noEmit` — clean
+- [x] `cd web && npm run build` — succeeds
+- [x] `cd web && npm audit --audit-level=high` — no findings
+- [x] `go test ./...` — green
+- [x] `govulncheck ./...` — no findings
+- [x] Every finding in `docs/security-static-review-2026-09.md` §3 is either fixed or has a written, dated decision not to fix — all fixed except R6 (pending, see below)
+- [x] `docs/security-static-review-2026-09.md` updated with a "Remediation status" section pointing at this index
+
+**Two items are not "fixed" in the usual sense, deliberately:**
+- **Plan C Tasks 4–5** (CI SHA pinning, Dependabot, security workflow gates) are **moot**: `.github/workflows/*` was removed entirely in a separate, concurrent move to Docker-based deployment. There is nothing left to pin or gate.
+- **R6** (cloud credential least-privilege review) is **pending**, not fixed — it's a console/CLI check needing Azure/Hetzner/Anthropic access this environment doesn't have. Template at [docs/cloud-credential-review-2026-09.md](../../cloud-credential-review-2026-09.md).
+
+Also fixed along the way, found while wiring up the (now-moot) CI security gates rather than in the original review: **9 `govulncheck` findings** in the Go 1.26.4 standard library and `golang.org/x/net`/`x/text` — see finding G1 in the static review.
