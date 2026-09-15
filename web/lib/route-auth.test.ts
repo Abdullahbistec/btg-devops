@@ -32,10 +32,10 @@ function anonRequest(url: string, init?: ConstructorParameters<typeof NextReques
 describe('C3 — routes reject an anonymous caller (no cookies at all)', () => {
   const cases: [string, () => Promise<Response>][] = [
     ['GET /api/findings', () => findingsGet(anonRequest('/api/findings'))],
-    ['GET /api/findings/:id', () => findingByIdGet(anonRequest('/api/findings/f1'), { params: { id: 'f1' } })],
+    ['GET /api/findings/:id', () => findingByIdGet(anonRequest('/api/findings/f1'), { params: Promise.resolve({ id: 'f1' }) })],
     ['PATCH /api/findings/:id', () => findingByIdPatch(
       anonRequest('/api/findings/f1', { method: 'PATCH', body: JSON.stringify({ remediation_status: 'suppressed' }) }),
-      { params: { id: 'f1' } },
+      { params: Promise.resolve({ id: 'f1' }) },
     )],
     ['GET /api/dashboard', () => dashboardGet(anonRequest('/api/dashboard'))],
     ['GET /api/cost/spend', () => costSpendGet(anonRequest('/api/cost/spend'))],
@@ -45,8 +45,8 @@ describe('C3 — routes reject an anonymous caller (no cookies at all)', () => {
     ['POST /api/cost/hetzner/backfill', () => hetznerBackfillPost(anonRequest('/api/cost/hetzner/backfill', { method: 'POST', body: '{}' }))],
     ['GET /api/subscriptions/compare', () => compareGet(anonRequest('/api/subscriptions/compare'))],
     ['POST /api/analysis-requests', () => analysisRequestsPost(anonRequest('/api/analysis-requests', { method: 'POST', body: JSON.stringify({ auditId: 'a1' }) }))],
-    ['GET /api/analysis-requests/:id', () => analysisRequestByIdGet(anonRequest('/api/analysis-requests/r1'), { params: { id: 'r1' } })],
-    ['GET /api/cost-requests/:id', () => costRequestByIdGet(anonRequest('/api/cost-requests/r1'), { params: { id: 'r1' } })],
+    ['GET /api/analysis-requests/:id', () => analysisRequestByIdGet(anonRequest('/api/analysis-requests/r1'), { params: Promise.resolve({ id: 'r1' }) })],
+    ['GET /api/cost-requests/:id', () => costRequestByIdGet(anonRequest('/api/cost-requests/r1'), { params: Promise.resolve({ id: 'r1' }) })],
     ['GET /api/settings', () => settingsGet(anonRequest('/api/settings'))],
     ['POST /api/settings/test', () => settingsTestPost(anonRequest('/api/settings/test', { method: 'POST' }))],
     ['GET /api/audits', () => auditsGet(anonRequest('/api/audits'))],
