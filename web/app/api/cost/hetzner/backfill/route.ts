@@ -4,6 +4,7 @@ import { saveHetznerReconstructedHistory } from '@/lib/db';
 import { isAdminRequest, getVerifiedIdentity } from '@/lib/auth';
 import { apiError } from '@/lib/api-error';
 import { consumeRateLimit, rateLimited } from '@/lib/rate-limit';
+import { recordAuditLog } from '@/lib/audit-log';
 
 const DEFAULT_DAYS = 180;
 const MAX_DAYS = 730;
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest) {
 
     const points = await runHetznerCostHistory(days);
     await saveHetznerReconstructedHistory(points);
+    await recordAuditLog(req, 'hetzner.backfill', { days, reconstructed: points.length });
 
     return NextResponse.json({
       reconstructed: points.length,

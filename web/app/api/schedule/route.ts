@@ -5,6 +5,7 @@ import { isAdminRequest, isAuthenticatedRequest } from '@/lib/auth';
 import { computeNextRun } from '@/lib/schedule-time';
 import { apiError } from '@/lib/api-error';
 import { parseBody, schedulePostSchema, schedulePatchSchema } from '@/lib/schemas';
+import { recordAuditLog } from '@/lib/audit-log';
 
 export async function GET(req: NextRequest) {
   if (!(await isAuthenticatedRequest(req))) {
@@ -34,6 +35,7 @@ export async function POST(req: NextRequest) {
        VALUES ($1, $2, $3, $4, $5, 1, $6, $7)`,
       [id, name || 'Scheduled Audit', frequency || 'daily', Number(hour ?? 2), timesPerDay, next_run, subscription_id || null]
     );
+    await recordAuditLog(req, 'schedule.create', { id, name, frequency, hour, times_per_day: timesPerDay });
     return NextResponse.json({ id });
   } catch (e) {
     return apiError(e, 'POST /api/schedule');
@@ -48,6 +50,7 @@ export async function PATCH(req: NextRequest) {
     const { id, enabled } = parsed.data;
     const db = await getDB();
     await db.query('UPDATE schedules SET enabled = $1 WHERE id = $2', [enabled ? 1 : 0, id]);
+    await recordAuditLog(req, 'schedule.toggle', { id, enabled: enabled ? 1 : 0 });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return apiError(e, 'PATCH /api/schedule');
@@ -61,6 +64,7 @@ export async function DELETE(req: NextRequest) {
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
     const db = await getDB();
     await db.query('DELETE FROM schedules WHERE id = $1', [id]);
+    await recordAuditLog(req, 'schedule.delete', { id });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return apiError(e, 'DELETE /api/schedule');

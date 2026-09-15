@@ -4,6 +4,7 @@ import { listSubscriptions, createSubscription, updateSubscriptionBudget } from 
 import { isAdminRequest } from '@/lib/auth';
 import { apiError } from '@/lib/api-error';
 import { parseBody, subscriptionPostSchema, subscriptionPatchSchema } from '@/lib/schemas';
+import { recordAuditLog } from '@/lib/audit-log';
 
 export async function GET(req: NextRequest) {
   if (!(await isAdminRequest(req))) {
@@ -25,6 +26,7 @@ export async function POST(req: NextRequest) {
     const parsed = await parseBody(req, subscriptionPostSchema);
     if (!parsed.ok) return parsed.response;
     const sub = await createSubscription(parsed.data);
+    await recordAuditLog(req, 'subscription.create', { id: sub.id, name: sub.name });
     return NextResponse.json(sub, { status: 201 });
   } catch (e) {
     return apiError(e, 'POST /api/subscriptions');
@@ -45,6 +47,7 @@ export async function PATCH(req: NextRequest) {
       ? null
       : parsed.data.monthly_budget;
     await updateSubscriptionBudget(parsed.data.id, monthlyBudget);
+    await recordAuditLog(req, 'subscription.budget', { id: parsed.data.id, monthly_budget: monthlyBudget });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return apiError(e, 'PATCH /api/subscriptions');

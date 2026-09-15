@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
 import { listUsers, updateUserStatus, deleteUser } from '@/lib/db';
 import { isAdminRequest } from '@/lib/auth';
+import { recordAuditLog } from '@/lib/audit-log';
 
 // Approve/reject/remove pending registrations (Settings page, admin only).
 // Was reachable with no auth check at all — any anonymous caller could list
@@ -27,6 +28,7 @@ export async function PATCH(req: NextRequest) {
   }
   const adminEmail = process.env.ADMIN_EMAIL ?? 'admin';
   await updateUserStatus(id, status!, adminEmail);
+  await recordAuditLog(req, 'user.status', { id, status });
   return NextResponse.json({ ok: true });
 }
 
@@ -36,5 +38,6 @@ export async function DELETE(req: NextRequest) {
   const id = searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
   await deleteUser(id);
+  await recordAuditLog(req, 'user.delete', { id });
   return NextResponse.json({ ok: true });
 }

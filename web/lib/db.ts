@@ -157,6 +157,23 @@ async function initSchema(pool: Pool): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_rate_limit_window ON rate_limit_hits(window_start);
 
+    -- Append-only trail of privileged actions. actor is the verified
+    -- session identity, or '' when the action somehow ran without one --
+    -- which is itself worth recording rather than dropping. detail is
+    -- JSON-encoded context, deliberately free-form because each action
+    -- carries different fields and this table is read by people, not
+    -- joined on.
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id         TEXT PRIMARY KEY,
+      actor      TEXT NOT NULL DEFAULT '',
+      action     TEXT NOT NULL,
+      detail     TEXT NOT NULL DEFAULT '{}',
+      ip         TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_actor   ON audit_log(actor);
+
     -- Async AI-analysis requests, picked up by a scheduled Claude Code
     -- routine polling through the MCP server (cmd/mcp.go --http) instead of
     -- a synchronous, metered LLM call. See docs/ai-analysis-routine-setup.md.

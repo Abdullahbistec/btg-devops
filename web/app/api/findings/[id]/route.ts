@@ -3,6 +3,7 @@ import { getDB } from '@/lib/db';
 import { isAuthenticatedRequest } from '@/lib/auth';
 import { apiError } from '@/lib/api-error';
 import { parseBody, findingPatchSchema } from '@/lib/schemas';
+import { recordAuditLog } from '@/lib/audit-log';
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   if (!(await isAuthenticatedRequest(req))) {
@@ -34,6 +35,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (support_ticket_ref !== undefined) {
       await db.query(`UPDATE findings SET support_ticket_ref = $1 WHERE id = $2`, [support_ticket_ref, params.id]);
     }
+    await recordAuditLog(req, 'finding.update', { id: params.id, remediation_status, support_ticket_ref });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return apiError(e, 'PATCH /api/findings/[id]');

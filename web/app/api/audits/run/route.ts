@@ -4,6 +4,7 @@ import { Command } from '@/lib/btg-runner';
 import { isAdminRequest, getVerifiedIdentity } from '@/lib/auth';
 import { apiError } from '@/lib/api-error';
 import { consumeRateLimit, rateLimited } from '@/lib/rate-limit';
+import { recordAuditLog } from '@/lib/audit-log';
 import type { NextRequest } from 'next/server';
 
 export async function POST(req: NextRequest) {
@@ -22,6 +23,7 @@ export async function POST(req: NextRequest) {
     };
 
     const { auditId } = await executeAudit(subscription_id, commands, name);
+    await recordAuditLog(req, 'audits.run', { subscription_id, audit_id: auditId, commands });
     return NextResponse.json({ audit_id: auditId, status: 'running' }, { status: 202 });
   } catch (e) {
     if (e instanceof AuditExecutorError) {
