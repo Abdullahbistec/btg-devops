@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Enter a valid 6-digit code' }, { status: 400 });
   }
 
-  const result = verifyOTP(pendingEmail, otp);
+  const result = await verifyOTP(pendingEmail, otp);
 
   if (result === 'expired') {
     return NextResponse.json({ error: 'Code expired. Request a new one.' }, { status: 401 });

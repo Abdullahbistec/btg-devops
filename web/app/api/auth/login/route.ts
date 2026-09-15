@@ -54,7 +54,7 @@ export async function POST(req: Request) {
 
   // 3. Generate & send OTP to user's own email
   const devMode = !process.env.SMTP_PASS || process.env.SMTP_PASS === 'your-email-password-here';
-  const otp = createOTP(normalEmail);
+  const otp = await createOTP(normalEmail);
   try {
     await sendOTPEmail(normalEmail, otp);
   } catch (err) {

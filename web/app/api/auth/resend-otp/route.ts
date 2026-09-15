@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Session expired. Please sign in again.' }, { status: 401 });
   }
 
-  const otp = createOTP(pendingEmail);
+  const otp = await createOTP(pendingEmail);
   try {
     await sendOTPEmail(pendingEmail, otp);
   } catch (err) {

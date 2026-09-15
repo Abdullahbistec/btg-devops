@@ -129,6 +129,20 @@ async function initSchema(pool: Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_users_email  ON users(email);
     CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
 
+    -- One live OTP per email; a resend replaces the previous row rather than
+    -- adding another. Holds a SHA-256 of the code, never the code itself —
+    -- an OTP is a credential, and this table is readable by anything with a
+    -- database connection. attempts lives here rather than in process
+    -- memory so the 3-strike lockout is global: a single atomic
+    -- UPDATE ... RETURNING claims an attempt, so two concurrent guesses (or
+    -- two app instances) cannot both observe attempts < MAX and slip past.
+    CREATE TABLE IF NOT EXISTS otp_codes (
+      email      TEXT PRIMARY KEY,
+      code_hash  TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      attempts   INTEGER NOT NULL DEFAULT 0
+    );
+
     -- Async AI-analysis requests, picked up by a scheduled Claude Code
     -- routine polling through the MCP server (cmd/mcp.go --http) instead of
     -- a synchronous, metered LLM call. See docs/ai-analysis-routine-setup.md.
