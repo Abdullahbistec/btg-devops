@@ -272,7 +272,7 @@ Ordered cheap-high-leverage first.
 8. **Pin CI actions to SHAs + least-privilege `permissions:` on `scheduled-audit.yml` + Dependabot (M3).** Add `npm audit` and `govulncheck` as CI gates. *Adopt — low effort.*
 
 ### Later
-9. **Least-privilege review of the Azure SPN and Hetzner token (R6).** Confirm the SPN holds only `Reader` (+ `Cost Management Reader`) and no write/delete; scope the Hetzner token to read-only if the API supports it. *Adopt — this bounds the blast radius if the runner or CI secrets leak; needs cloud-side access to verify, hence Later.*
+9. **Least-privilege review of the Azure SPN and Hetzner token (R6).** Confirm the SPN holds only `Reader` (+ `Cost Management Reader`) and no write/delete; scope the Hetzner token to read-only if the API supports it. *Adopt — this bounds the blast radius if the runner or CI secrets leak; needs cloud-side access to verify, hence Later.* **Tracking:** [docs/cloud-credential-review-2026-09.md](cloud-credential-review-2026-09.md) — template drafted 2026-09-15, still PENDING actual Azure/Hetzner/Anthropic console access to fill in.
 10. **Real sessions + revocation + MFA posture** — server-side session records (or signed tokens with `exp`/`jti`), a logout that invalidates server-side, and a decision on TOTP vs. email OTP. *Adopt later — larger change; the Now items make the current scheme safe enough in the interim.*
 11. **Security regression tests** — one authz test per route (anonymous → 401/403, viewer → 403 on admin routes) and a secret-leak test asserting no route returns raw error text or secrets. *Adopt — locks in the fixes.*
 12. **Threat-model refresh cadence** — revisit on each new external boundary (new MCP tool, new public route); assign an owner. *Adopt as process.*
