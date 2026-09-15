@@ -434,6 +434,19 @@ export async function getStaleRunningAudits(maxAgeHours: number): Promise<{ id: 
   return rows;
 }
 
+/** Whether any audit is currently running, of any age.
+ *
+ * Used to hold off the scheduler's daily cost refresh and backfill heal:
+ * an audit's analyzer chain (executeAudit() fires it unawaited) queries the
+ * same Cost Management API those jobs do, so starting them while an audit
+ * is already mid-run stacks concurrent callers onto the same tenant-wide
+ * rate limit instead of spreading them out. */
+export async function hasRunningAudit(): Promise<boolean> {
+  const db = await getDB();
+  const { rows } = await db.query(`SELECT 1 FROM audits WHERE status = 'running' LIMIT 1`);
+  return rows.length > 0;
+}
+
 // ── Findings ──────────────────────────────────────────────────────────────────
 
 export interface Finding {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
-import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory, getStaleRunningAudits, saveHetznerCostSnapshot, getHetznerCostSnapshot, getHetznerCostHistory , saveHetznerReconstructedHistory, hasMeasuredHetznerSnapshotToday} from './db';
+import { getDB, insertFindings, saveCostSnapshot, getCostSnapshotHistory, getStaleRunningAudits, saveHetznerCostSnapshot, getHetznerCostSnapshot, getHetznerCostHistory , saveHetznerReconstructedHistory, hasMeasuredHetznerSnapshotToday, hasRunningAudit} from './db';
 
 /** Refuses to run destructive setup against anything that isn't clearly a
  * disposable test database — same intent as the old SQLite guard (which
@@ -312,6 +312,51 @@ describe('getStaleRunningAudits', () => {
 
     const stale = await getStaleRunningAudits(12);
     expect(stale).toHaveLength(0);
+  });
+});
+
+describe('hasRunningAudit', () => {
+  beforeEach(async () => {
+    await assertTestDatabase();
+    const db = await getDB();
+    await db.query('DELETE FROM findings');
+    await db.query('DELETE FROM audits');
+    await db.query('DELETE FROM subscriptions');
+    await db.query(`
+      INSERT INTO subscriptions (id, name, subscription_id, tenant_id, client_id)
+      VALUES ('sub-1', 'Test Sub', 'sub-guid', 'tenant-guid', 'client-guid')
+    `);
+  });
+
+  // Guards the scheduler's daily cost refresh and backfill heal: an audit's
+  // analyzer chain runs unawaited in the background and hits the same
+  // Cost Management API those jobs do, so starting them while an audit is
+  // mid-run is exactly the concurrent-caller pileup that produces 429s.
+  it('is true while an audit is running', async () => {
+    const db = await getDB();
+    await db.query(`
+      INSERT INTO audits (id, subscription_id, name, status)
+      VALUES ('audit-1', 'sub-1', 'In Progress', 'running')
+    `);
+
+    expect(await hasRunningAudit()).toBe(true);
+  });
+
+  it('is false when every audit has completed, failed, or is merely pending', async () => {
+    const db = await getDB();
+    await db.query(`
+      INSERT INTO audits (id, subscription_id, name, status)
+      VALUES
+        ('audit-done', 'sub-1', 'Done', 'completed'),
+        ('audit-failed', 'sub-1', 'Failed', 'failed'),
+        ('audit-pending', 'sub-1', 'Pending', 'pending')
+    `);
+
+    expect(await hasRunningAudit()).toBe(false);
+  });
+
+  it('is false with no audits at all', async () => {
+    expect(await hasRunningAudit()).toBe(false);
   });
 });
 

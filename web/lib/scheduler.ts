@@ -1,8 +1,9 @@
-import { getDB, hasCostSnapshotHistoryRow, hasBackfillRequestToday, createCostBackfillRequest, completeCostFetchRequest, failCostFetchRequest, getStaleRunningAudits, failAudit, getHetznerCostSnapshot, saveHetznerCostSnapshot, hasMeasuredHetznerSnapshotToday } from '@/lib/db';
+import { getDB, hasCostSnapshotHistoryRow, hasBackfillRequestToday, createCostBackfillRequest, completeCostFetchRequest, failCostFetchRequest, getStaleRunningAudits, failAudit, getHetznerCostSnapshot, saveHetznerCostSnapshot, hasMeasuredHetznerSnapshotToday, hasRunningAudit } from '@/lib/db';
 import { executeAudit } from '@/lib/audit-executor';
 import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
 import { runHetznerCostReport } from '@/lib/btg-runner';
 import { computeNextRun, toUtcTimestamp, NOW_UTC_SQL } from '@/lib/schedule-time';
+import { createSingleFlightRunner } from '@/lib/single-flight';
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -66,6 +67,17 @@ async function runDueSchedules() {
  * GitHub Actions cron half, which only activates once DASHBOARD_BASE_URL
  * is set. */
 async function runDailyCostRefresh() {
+  // An audit's analyzer chain queries this same Cost Management API in the
+  // background (executeAudit() fires it unawaited — see runDueSchedules),
+  // so starting a refresh while one is running just stacks a second
+  // concurrent caller onto the same tenant-wide rate limit. Skipping here
+  // costs nothing: this function is re-checked every poll tick, so the
+  // refresh runs on the very next tick after the audit finishes.
+  if (await hasRunningAudit()) {
+    console.log('[scheduler] skipping daily cost refresh — an audit is currently running');
+    return;
+  }
+
   const db = await getDB();
   let subs: { id: string; name: string }[];
   let today: string;
@@ -139,6 +151,14 @@ async function runDailyHetznerCostRefresh() {
  * refresh (e.g. the server was down, or Azure was rate-limiting every
  * attempt) stays permanently stuck until this retries the backfill. */
 async function runDailyBackfillHeal() {
+  // Same reasoning as runDailyCostRefresh's guard: backfillCostHistory hits
+  // Cost Management too, and a 6-month backfill is the heaviest of these
+  // callers — exactly what must not overlap a live audit.
+  if (await hasRunningAudit()) {
+    console.log('[scheduler] skipping daily backfill heal — an audit is currently running');
+    return;
+  }
+
   const db = await getDB();
   let subs: { id: string; name: string }[];
   try {
@@ -192,6 +212,28 @@ async function healStaleAudits() {
   }
 }
 
+/** One poll cycle's work, run sequentially rather than fired concurrently.
+ *
+ * This used to launch runDueSchedules, the cost refreshes, and the backfill
+ * heal all at once, unawaited. On a fresh start that meant a newly-kicked-off
+ * audit's analyzer chain, a daily Azure cost refresh, a 6-month backfill, and
+ * (independently) the Hetzner refresh were all issuing Cost Management calls
+ * in the same instant — a thundering herd against a single tenant-wide rate
+ * limit, which is exactly what produced sustained 429s on startup. Running
+ * them one after another (plus the hasRunningAudit() guards above) spreads
+ * that load out instead of piling it up.
+ *
+ * Hetzner is the one job still allowed to run alongside the rest: it never
+ * touches Azure's Cost Management API, so it shares no rate limit with
+ * anything else here and gains nothing from being serialized against it. */
+async function runSchedulerCycle() {
+  await runDueSchedules().catch(e => console.error('[scheduler] due-schedules poll failed:', e));
+  await runDailyCostRefresh().catch(e => console.error('[scheduler] daily cost refresh poll failed:', e));
+  await runDailyHetznerCostRefresh().catch(e => console.error('[scheduler] daily Hetzner cost refresh poll failed:', e));
+  await runDailyBackfillHeal().catch(e => console.error('[scheduler] daily backfill heal poll failed:', e));
+  await healStaleAudits().catch(e => console.error('[scheduler] stale audit heal poll failed:', e));
+}
+
 let started = false;
 
 /** Starts the in-process schedule poller. Idempotent — safe to call multiple
@@ -201,28 +243,15 @@ export function startScheduler() {
   if (started) return;
   started = true;
   console.log('[scheduler] started, polling every 60s for due schedules');
-  setInterval(() => {
-    runDueSchedules().catch(e => console.error('[scheduler] poll cycle failed:', e));
-    // Azure and Hetzner are independent — one failing must not skip the
-    // other, so these are settled separately rather than awaited in
-    // sequence. Both functions already catch their own errors internally,
-    // so allSettled here is belt-and-suspenders against anything escaping
-    // that.
-    Promise.allSettled([runDailyCostRefresh(), runDailyHetznerCostRefresh()])
-      .then(([azure, hetzner]) => {
-        if (azure.status === 'rejected') console.error('[scheduler] daily cost refresh poll failed:', azure.reason);
-        if (hetzner.status === 'rejected') console.error('[scheduler] daily Hetzner cost refresh poll failed:', hetzner.reason);
-      });
-    runDailyBackfillHeal().catch(e => console.error('[scheduler] daily backfill heal poll failed:', e));
-    healStaleAudits().catch(e => console.error('[scheduler] stale audit heal poll failed:', e));
-  }, POLL_INTERVAL_MS);
+
+  // Single-flight, not just sequential: a cycle whose audit or backfill step
+  // is still working through 429 backoff can easily outlast one 60s
+  // interval. Without this guard, the next tick starts a second cycle on top
+  // of the first — the same pile-up this whole restructure exists to avoid,
+  // just moved from "within one tick" to "across ticks".
+  const runCycle = createSingleFlightRunner(runSchedulerCycle);
+
+  setInterval(() => { runCycle(); }, POLL_INTERVAL_MS);
   // Also do an immediate check on startup rather than waiting a full interval.
-  runDueSchedules().catch(e => console.error('[scheduler] initial poll failed:', e));
-  Promise.allSettled([runDailyCostRefresh(), runDailyHetznerCostRefresh()])
-    .then(([azure, hetzner]) => {
-      if (azure.status === 'rejected') console.error('[scheduler] initial daily cost refresh failed:', azure.reason);
-      if (hetzner.status === 'rejected') console.error('[scheduler] initial daily Hetzner cost refresh failed:', hetzner.reason);
-    });
-  runDailyBackfillHeal().catch(e => console.error('[scheduler] initial daily backfill heal failed:', e));
-  healStaleAudits().catch(e => console.error('[scheduler] initial stale audit heal failed:', e));
+  runCycle();
 }
