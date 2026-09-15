@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 import { createOTP } from '@/lib/otp-store';
 import { sendOTPEmail } from '@/lib/mailer';
 import { getUserByEmail } from '@/lib/db';
 import { verifyPassword, makeSessionToken, requireSessionSecret, sessionCookieOptions } from '@/lib/auth';
+import { consumeRateLimit, clientIp, rateLimited } from '@/lib/rate-limit';
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const { email, password } = body as { email?: string; password?: string };
 
@@ -13,6 +15,15 @@ export async function POST(req: Request) {
   }
 
   const normalEmail = email.trim().toLowerCase();
+
+  // Two buckets on purpose: the per-IP one stops a single host grinding
+  // through passwords, and the per-account one stops a spray from many hosts
+  // against one victim, which a per-IP limit never sees.
+  const byIp = await consumeRateLimit(`login:ip:${clientIp(req)}`, 10, 900);
+  const byAccount = await consumeRateLimit(`login:email:${normalEmail}`, 10, 900);
+  if (!byIp.allowed) return rateLimited(byIp);
+  if (!byAccount.allowed) return rateLimited(byAccount);
+
   const adminEmail  = (process.env.ADMIN_EMAIL ?? '').toLowerCase();
   const adminPass   = process.env.ADMIN_PASSWORD ?? '';
 

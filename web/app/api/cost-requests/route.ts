@@ -6,8 +6,9 @@ import {
 } from '@/lib/db';
 import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
 import { runHetznerCostReport } from '@/lib/btg-runner';
-import { isAdminRequest } from '@/lib/auth';
+import { isAdminRequest, getVerifiedIdentity } from '@/lib/auth';
 import { apiError, logServerError } from '@/lib/api-error';
+import { consumeRateLimit, rateLimited } from '@/lib/rate-limit';
 
 function backfillNote(saved: number, skipped: number, errors: string[]): string | undefined {
   if (errors.length === 0) return undefined;
@@ -37,6 +38,13 @@ export async function POST(req: NextRequest) {
     if (!(await isAdminRequest(req))) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
+
+    // 20/hour comfortably covers the scheduled refresh (one per subscription,
+    // four workflow runs a day) and a person clicking Refresh, while capping
+    // how hard this route can be made to hammer Azure Cost Management's
+    // tenant-wide rate limit.
+    const limit = await consumeRateLimit(`cost-requests:account:${getVerifiedIdentity(req)}`, 20, 3600);
+    if (!limit.allowed) return rateLimited(limit);
 
     const body = await req.json().catch(() => ({}));
 

@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { getUserByEmail, createUser } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 import { sendRegistrationNotification } from '@/lib/mailer';
+import { consumeRateLimit, clientIp, rateLimited } from '@/lib/rate-limit';
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const { email, name, password } = body as { email?: string; name?: string; password?: string };
 
@@ -14,6 +16,12 @@ export async function POST(req: Request) {
   if (password.length < 8) {
     return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
   }
+
+  // Registration is open to anyone and every attempt writes a users row that
+  // an admin then has to triage. Five an hour per address is generous for a
+  // human and useless for a flood.
+  const byIp = await consumeRateLimit(`register:ip:${clientIp(req)}`, 5, 3600);
+  if (!byIp.allowed) return rateLimited(byIp);
 
   const normalEmail = email.trim().toLowerCase();
 

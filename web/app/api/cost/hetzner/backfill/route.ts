@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runHetznerCostHistory } from '@/lib/btg-runner';
 import { saveHetznerReconstructedHistory } from '@/lib/db';
-import { isAdminRequest } from '@/lib/auth';
+import { isAdminRequest, getVerifiedIdentity } from '@/lib/auth';
 import { apiError } from '@/lib/api-error';
+import { consumeRateLimit, rateLimited } from '@/lib/rate-limit';
 
 const DEFAULT_DAYS = 180;
 const MAX_DAYS = 730;
@@ -28,6 +29,8 @@ export async function POST(req: NextRequest) {
   if (!(await isAdminRequest(req))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
+  const limit = await consumeRateLimit(`hetzner-backfill:account:${getVerifiedIdentity(req)}`, 3, 3600);
+  if (!limit.allowed) return rateLimited(limit);
   try {
     const body = await req.json().catch(() => ({}));
     const requested = Math.floor(Number(body?.days) || DEFAULT_DAYS);
