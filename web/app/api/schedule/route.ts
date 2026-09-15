@@ -4,19 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { isAdminRequest, isAuthenticatedRequest } from '@/lib/auth';
 import { computeNextRun } from '@/lib/schedule-time';
 import { apiError } from '@/lib/api-error';
-
-interface Schedule {
-  id: string;
-  name: string;
-  frequency: string;
-  hour: number;
-  times_per_day: number;
-  enabled: number;
-  last_run_at: string | null;
-  next_run_at: string | null;
-  subscription_id: string | null;
-  created_at: string;
-}
+import { parseBody, schedulePostSchema, schedulePatchSchema } from '@/lib/schemas';
 
 export async function GET(req: NextRequest) {
   if (!(await isAuthenticatedRequest(req))) {
@@ -34,12 +22,10 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   if (!(await isAdminRequest(req))) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   try {
-    const body = await req.json().catch(() => ({}));
-    const { name, frequency, hour, times_per_day, subscription_id } = body as Partial<Schedule>;
-    // Must evenly divide 24 so slots land on the hour every time — anything
-    // else (e.g. 5x/day) would drift, which computeNextRun assumes never happens.
-    const VALID_TIMES_PER_DAY = [1, 2, 3, 4, 6, 8, 12, 24];
-    const timesPerDay = VALID_TIMES_PER_DAY.includes(Number(times_per_day)) ? Number(times_per_day) : 1;
+    const parsed = await parseBody(req, schedulePostSchema);
+    if (!parsed.ok) return parsed.response;
+    const { name, frequency, hour, times_per_day, subscription_id } = parsed.data;
+    const timesPerDay = times_per_day ?? 1;
     const db = await getDB();
     const id = uuidv4();
     const next_run = computeNextRun(frequency ?? 'daily', Number(hour ?? 2), new Date(), timesPerDay);
@@ -57,8 +43,9 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   if (!(await isAdminRequest(req))) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   try {
-    const body = await req.json().catch(() => ({}));
-    const { id, enabled } = body as { id: string; enabled: number };
+    const parsed = await parseBody(req, schedulePatchSchema);
+    if (!parsed.ok) return parsed.response;
+    const { id, enabled } = parsed.data;
     const db = await getDB();
     await db.query('UPDATE schedules SET enabled = $1 WHERE id = $2', [enabled ? 1 : 0, id]);
     return NextResponse.json({ ok: true });

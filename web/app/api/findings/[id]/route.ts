@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDB } from '@/lib/db';
 import { isAuthenticatedRequest } from '@/lib/auth';
 import { apiError } from '@/lib/api-error';
+import { parseBody, findingPatchSchema } from '@/lib/schemas';
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   if (!(await isAuthenticatedRequest(req))) {
@@ -17,28 +18,14 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
-const MAX_TICKET_REF_LENGTH = 200;
-
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   if (!(await isAuthenticatedRequest(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const body = await req.json().catch(() => ({}));
-    const { remediation_status, support_ticket_ref } = body as { remediation_status?: string; support_ticket_ref?: string };
-
-    if (remediation_status !== undefined) {
-      const allowed = ['open', 'acknowledged', 'resolved', 'suppressed'];
-      if (!allowed.includes(remediation_status)) {
-        return NextResponse.json({ error: 'Invalid remediation_status' }, { status: 400 });
-      }
-    }
-    if (support_ticket_ref !== undefined && support_ticket_ref.length > MAX_TICKET_REF_LENGTH) {
-      return NextResponse.json({ error: `support_ticket_ref must be ${MAX_TICKET_REF_LENGTH} characters or fewer` }, { status: 400 });
-    }
-    if (remediation_status === undefined && support_ticket_ref === undefined) {
-      return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
-    }
+    const parsed = await parseBody(req, findingPatchSchema);
+    if (!parsed.ok) return parsed.response;
+    const { remediation_status, support_ticket_ref } = parsed.data;
 
     const db = await getDB();
     if (remediation_status !== undefined) {
