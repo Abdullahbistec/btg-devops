@@ -11,6 +11,12 @@ on:
     - cron: '30 0,6,12,18 * * *'
   workflow_dispatch: {}    # manual "Run workflow" button, same job
 
+# This job holds the Azure, Power Platform, Hetzner and Anthropic secrets.
+# It only needs to read the repository — artifact upload uses the Actions
+# runtime token, not GITHUB_TOKEN — so nothing here should be able to write.
+permissions:
+  contents: read
+
 jobs:
   audit:
     runs-on: ubuntu-latest
@@ -31,9 +37,9 @@ jobs:
       # checked whether it actually came up.
       HAS_CLAUDE_ENGINE: ${{ secrets.ANTHROPIC_API_KEY != '' && secrets.MCP_BEARER_TOKEN != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -98,7 +104,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload findings as artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: governance-findings-${{ github.run_id }}
           path: |
@@ -110,7 +116,7 @@ jobs:
 
       # No-ops cleanly (exit 0) until DASHBOARD_BASE_URL is configured —
       # nothing is deployed publicly yet, so this stays inert by design.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
 
