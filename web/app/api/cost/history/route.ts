@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDB, getSubscription, getCostSnapshotHistory } from '@/lib/db';
 import { isAuthenticatedRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 // Sibling to /api/cost/spend — that route reads the latest-only
 // cost_snapshots row; this one reads the additive cost_snapshot_history
@@ -37,6 +38,6 @@ export async function GET(req: NextRequest) {
       })),
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/cost/history');
   }
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getHetznerCostHistory } from '@/lib/db';
 import { isAuthenticatedRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 const DEFAULT_DAYS = 90;
 
@@ -34,6 +35,6 @@ export async function GET(req: NextRequest) {
       estimate: true,
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/cost/hetzner/history');
   }
 }

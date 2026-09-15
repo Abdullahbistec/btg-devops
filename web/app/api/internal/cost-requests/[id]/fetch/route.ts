@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isInternalServiceRequest } from '@/lib/auth';
 import { getCostFetchRequest, completeCostFetchRequest, failCostFetchRequest } from '@/lib/db';
 import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
+import { logServerError } from '@/lib/api-error';
 
 /** Backs the MCP server's fetch_cost_data tool. This is the ONLY place that
  * actually calls Azure Cost Management live — Azure credentials never leave
@@ -38,7 +39,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       currency: payload.currency,
     });
   } catch (e) {
-    const message = (e as Error).message;
+    const correlationId = logServerError(e, 'POST /api/internal/cost-requests/[id]/fetch');
+    const message = `Cost fetch failed on our side. Reference: ${correlationId}`;
     await failCostFetchRequest(params.id, message);
     return NextResponse.json({ ok: false, error: message }, { status: 502 });
   }

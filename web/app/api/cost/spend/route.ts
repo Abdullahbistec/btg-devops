@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDB, getSubscription, getCostSnapshot } from '@/lib/db';
 import { isAuthenticatedRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 // Reads ONLY the last snapshot written by the MCP + Claude-routine mechanism
 // (see docs/ai-analysis-routine-setup.md) — this route never calls Azure
@@ -45,6 +46,6 @@ export async function GET(req: NextRequest) {
       monthlyBudget: sub.monthly_budget,
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/cost/spend');
   }
 }

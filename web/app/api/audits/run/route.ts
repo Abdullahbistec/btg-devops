@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { executeAudit, AuditExecutorError } from '@/lib/audit-executor';
 import { Command } from '@/lib/btg-runner';
 import { isAdminRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 import type { NextRequest } from 'next/server';
 
 export async function POST(req: NextRequest) {
@@ -22,6 +23,6 @@ export async function POST(req: NextRequest) {
     if (e instanceof AuditExecutorError) {
       return NextResponse.json({ error: e.message }, { status: 404 });
     }
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'POST /api/audits/run');
   }
 }

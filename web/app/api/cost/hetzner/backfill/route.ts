@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runHetznerCostHistory } from '@/lib/btg-runner';
 import { saveHetznerReconstructedHistory } from '@/lib/db';
 import { isAdminRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 const DEFAULT_DAYS = 180;
 const MAX_DAYS = 730;
@@ -41,6 +42,6 @@ export async function POST(req: NextRequest) {
       note: 'Derived from resource creation dates at current list prices. Resources deleted before today are invisible, so past days are understated.',
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'POST /api/cost/hetzner/backfill');
   }
 }

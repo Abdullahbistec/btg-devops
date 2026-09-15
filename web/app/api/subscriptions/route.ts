@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { listSubscriptions, createSubscription, updateSubscriptionBudget } from '@/lib/db';
 import { isAdminRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 export async function GET(req: NextRequest) {
   if (!(await isAdminRequest(req))) {
@@ -11,7 +12,7 @@ export async function GET(req: NextRequest) {
     const subs = await listSubscriptions();
     return NextResponse.json(subs);
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/subscriptions');
   }
 }
 
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json(sub, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'POST /api/subscriptions');
   }
 }
 
@@ -55,6 +56,6 @@ export async function PATCH(req: NextRequest) {
     await updateSubscriptionBudget(body.id, monthlyBudget);
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'PATCH /api/subscriptions');
   }
 }

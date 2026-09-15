@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDB, listAudits } from '@/lib/db';
 import { PP_SERVICE_LABELS, HETZNER_SERVICE_LABELS, PP_COMMANDS, AZURE_COMMANDS, HETZNER_COMMANDS } from '@/lib/btg-runner';
 import { isAuthenticatedRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 // SQL IN-lists per provider — used to scope queries. "azure" is everything
 // NOT in PP or Hetzner's label sets, rather than its own explicit list,
@@ -184,6 +185,6 @@ export async function GET(req: NextRequest) {
       resourcesScanned,
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/dashboard');
   }
 }

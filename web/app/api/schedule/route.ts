@@ -3,6 +3,7 @@ import { getDB } from '@/lib/db';
 import { v4 as uuidv4 } from 'uuid';
 import { isAdminRequest, isAuthenticatedRequest } from '@/lib/auth';
 import { computeNextRun } from '@/lib/schedule-time';
+import { apiError } from '@/lib/api-error';
 
 interface Schedule {
   id: string;
@@ -26,7 +27,7 @@ export async function GET(req: NextRequest) {
     const { rows } = await db.query('SELECT * FROM schedules ORDER BY created_at DESC');
     return NextResponse.json(rows);
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/schedule');
   }
 }
 
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
     );
     return NextResponse.json({ id });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'POST /api/schedule');
   }
 }
 
@@ -62,7 +63,7 @@ export async function PATCH(req: NextRequest) {
     await db.query('UPDATE schedules SET enabled = $1 WHERE id = $2', [enabled ? 1 : 0, id]);
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'PATCH /api/schedule');
   }
 }
 
@@ -75,6 +76,6 @@ export async function DELETE(req: NextRequest) {
     await db.query('DELETE FROM schedules WHERE id = $1', [id]);
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'DELETE /api/schedule');
   }
 }

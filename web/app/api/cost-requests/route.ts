@@ -7,6 +7,7 @@ import {
 import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
 import { runHetznerCostReport } from '@/lib/btg-runner';
 import { isAdminRequest } from '@/lib/auth';
+import { apiError, logServerError } from '@/lib/api-error';
 
 function backfillNote(saved: number, skipped: number, errors: string[]): string | undefined {
   if (errors.length === 0) return undefined;
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
         // Azure response is one a polling caller can't mistake for "no id".
         return NextResponse.json({ id: uuidv4(), status: 'done' }, { status: 202 });
       } catch (e) {
-        return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+        return apiError(e, 'POST /api/cost-requests (hetzner refresh)');
       }
     }
 
@@ -102,12 +103,13 @@ export async function POST(req: NextRequest) {
           await completeCostFetchRequest(request.id);
         }
       } catch (e) {
-        await failCostFetchRequest(request.id, (e as Error).message);
+        const correlationId = logServerError(e, 'POST /api/cost-requests (background refresh/backfill)');
+        await failCostFetchRequest(request.id, `Fetch failed on our side. Reference: ${correlationId}`);
       }
     }
 
     return NextResponse.json({ id: request.id, status: request.status }, { status: 202 });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'POST /api/cost-requests');
   }
 }

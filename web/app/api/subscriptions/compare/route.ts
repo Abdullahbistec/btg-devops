@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDB, listSubscriptionsBasic } from '@/lib/db';
 import { isAuthenticatedRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 interface AuditSummary {
   id: string;
@@ -49,6 +50,6 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(results);
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/subscriptions/compare');
   }
 }

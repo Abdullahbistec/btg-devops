@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAnalysisRequest } from '@/lib/db';
 import { triggerQueueDrain } from '@/lib/routine-trigger';
 import { isAuthenticatedRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 /** Creates a pending AI-analysis request. A Claude Code agent polling through
  * the MCP server (cmd/mcp.go --http) picks it up, reasons over the audit's
@@ -27,6 +28,6 @@ export async function POST(req: NextRequest) {
     triggerQueueDrain();
     return NextResponse.json({ id: request.id, status: request.status }, { status: 202 });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'POST /api/analysis-requests');
   }
 }

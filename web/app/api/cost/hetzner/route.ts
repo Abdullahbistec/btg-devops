@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getHetznerCostSnapshot } from '@/lib/db';
 import { isAuthenticatedRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 // Reads only the stored snapshot — never calls Hetzner. Mirrors
 // /api/cost/spend. Unlike Azure this figure is a list-price estimate, never
@@ -27,6 +28,6 @@ export async function GET(req: NextRequest) {
       estimate: true,
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/cost/hetzner');
   }
 }

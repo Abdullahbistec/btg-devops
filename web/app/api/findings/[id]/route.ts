@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDB } from '@/lib/db';
 import { isAuthenticatedRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   if (!(await isAuthenticatedRequest(req))) {
@@ -12,7 +13,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     if (!rows[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     return NextResponse.json(rows[0]);
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/findings/[id]');
   }
 }
 
@@ -48,6 +49,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'PATCH /api/findings/[id]');
   }
 }
