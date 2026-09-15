@@ -1,6 +1,19 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 
+export const GENERIC_ERROR_TEXT = 'Something went wrong on our side. Quote this reference if you report it.';
+
+/** Logs the real exception server-side under a correlation id and returns
+ * that id. Shared by apiError() and by the couple of call sites that record
+ * a failure message somewhere other than a direct response body (e.g. an
+ * async job row a different route later reads) — those still need to avoid
+ * leaking raw exception text, just not through a NextResponse. */
+export function logServerError(e: unknown, context: string): string {
+  const correlationId = randomUUID();
+  console.error(`[api-error ${correlationId}] ${context}:`, e);
+  return correlationId;
+}
+
 /** Generic 500 for an unexpected failure.
  *
  * The routes used to return `(e as Error).message` straight to the caller,
@@ -12,13 +25,9 @@ import { randomUUID } from 'crypto';
  * Only for *unexpected* failures. Deliberate 400/401/403/404/409 responses
  * are the API's contract and must keep their own specific messages. */
 export function apiError(e: unknown, context: string): NextResponse {
-  const correlationId = randomUUID();
-  console.error(`[api-error ${correlationId}] ${context}:`, e);
+  const correlationId = logServerError(e, context);
   return NextResponse.json(
-    {
-      error: 'Something went wrong on our side. Quote this reference if you report it.',
-      correlationId,
-    },
+    { error: GENERIC_ERROR_TEXT, correlationId },
     { status: 500 }
   );
 }
