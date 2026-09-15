@@ -1,3 +1,5 @@
+import { randomInt } from 'crypto';
+
 // Singleton OTP store — persists across hot-reloads in Next.js dev mode
 interface OTPEntry {
   otp:      string;
@@ -14,7 +16,9 @@ const TTL_MS       = 5 * 60 * 1000;  // 5 minutes
 const MAX_ATTEMPTS = 3;
 
 export function generateOTP(): string {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  // randomInt is a CSPRNG and the range is the full 6-digit space including
+  // codes with leading zeros, which padStart preserves.
+  return String(randomInt(0, 1_000_000)).padStart(6, '0');
 }
 
 export function createOTP(email: string): string {
