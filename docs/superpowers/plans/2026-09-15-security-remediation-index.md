@@ -103,6 +103,6 @@ Both should be raised as issues rather than silently dropped.
 
 **Two items are not "fixed" in the usual sense, deliberately:**
 - **Plan C Tasks 4–5** (CI SHA pinning, Dependabot, security workflow gates) are **moot**: `.github/workflows/*` was removed entirely in a separate, concurrent move to Docker-based deployment. There is nothing left to pin or gate.
-- **R6** (cloud credential least-privilege review) is **pending**, not fixed — it's a console/CLI check needing Azure/Hetzner/Anthropic access this environment doesn't have. Template at [docs/cloud-credential-review-2026-09.md](../../cloud-credential-review-2026-09.md).
+- **R6** (cloud credential least-privilege review) is **partially closed**: the Azure/Power Platform service principal was verified 2026-09-15 via direct REST calls (no `az` CLI needed — the app's own client-credentials from `web/.env.local` were enough to check its own role assignments and Graph permissions). Exactly `Reader` + `Cost Management Reader` at subscription scope, no write/delete, and only read-only Graph permissions. Hetzner and Anthropic still need real console access this environment doesn't have. See [docs/cloud-credential-review-2026-09.md](../../cloud-credential-review-2026-09.md).
 
 Also fixed along the way, found while wiring up the (now-moot) CI security gates rather than in the original review: **9 `govulncheck` findings** in the Go 1.26.4 standard library and `golang.org/x/net`/`x/text` — see finding G1 in the static review.

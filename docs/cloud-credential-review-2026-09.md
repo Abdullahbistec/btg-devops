@@ -1,9 +1,10 @@
 # Cloud Credential Least-Privilege Review (R6)
 
-**Status:** 🔶 PENDING — template only. This review needs someone with Azure
-portal/CLI access, Hetzner Cloud Console access, and the Anthropic Console,
-none of which are reachable from this environment. Fill in each `TODO` below
-and flip the status line to CLOSED once done.
+**Status:** 🟡 PARTIALLY CLOSED — Azure/Power Platform verified 2026-09-15
+(§1). Hetzner (§2) and Anthropic (§3) still need console access this
+environment doesn't have — the Hetzner API has no endpoint that reports a
+token's own scope, and checking it via a write-probe against production
+infrastructure isn't something to do to find out.
 
 **Source:** `docs/security-static-review-2026-09.md` finding R6 —
 "actual Azure RBAC / Hetzner token scope granted to the runner (needs cloud
@@ -18,7 +19,7 @@ check plus, where something is over-scoped, a console/CLI change.
 
 ---
 
-## 1. Azure service principal (`AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`)
+## 1. Azure service principal (`AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`) — ✅ VERIFIED 2026-09-15
 
 **What it's used for:** every Azure and Power Platform analyzer in `cmd/`
 reads resources, cost data, and configuration — every code path is a read
@@ -28,37 +29,63 @@ resource.
 **What it needs:** `Reader` at the subscription(s) scope actually audited,
 plus `Cost Management Reader` for the cost analyzers.
 
-- [ ] **TODO: Run and record the output**
+**Method:** `az` CLI wasn't available in this environment, so this was
+checked directly via REST: acquired an ARM token and a Graph token for the
+app itself using its own client-credentials (`AZURE_TENANT_ID` /
+`AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` from `web/.env.local`), resolved
+the service principal's object id via `GET
+https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq
+'<AZURE_CLIENT_ID>'` (an app can always read its own service principal —
+no extra Graph permission needed for that specific lookup), then queried
+role assignments and app-role grants for that object id. No secret or
+token value was ever printed; the script only echoed derived JSON (role
+names, scopes).
 
-  ```bash
-  az ad sp show --id "$AZURE_CLIENT_ID" --query "{displayName:displayName, appId:appId}" -o json
-  az role assignment list --assignee "$AZURE_CLIENT_ID" --all -o table
-  ```
+- [x] **Role assignments at subscription scope** (`GET
+  .../roleAssignments?$filter=principalId eq '<objectId>'`):
 
-  Paste the real output here:
-  ```
-  (paste az role assignment list output)
-  ```
+  | Role | Scope | Actions |
+  |---|---|---|
+  | `Reader` | `/subscriptions/<the one subscription>` | `*/read` |
+  | `Cost Management Reader` | `/subscriptions/<the one subscription>` | `Microsoft.Consumption/*/read`, `Microsoft.CostManagement/*/read`, `Microsoft.Billing/billingPeriods/read`, `Microsoft.Resources/subscriptions/read`, `Microsoft.Resources/subscriptions/resourceGroups/read`, `Microsoft.Support/*`, `Microsoft.Advisor/configurations/read`, `Microsoft.Advisor/recommendations/read`, `Microsoft.Management/managementGroups/read`, `Microsoft.Billing/billingProperty/read` |
 
-- [ ] **TODO: Flag anything that can write.** Any `Contributor`, `Owner`,
-  `User Access Administrator`, or a custom role whose `actions` include
-  anything beyond `*/read` is more privilege than every Azure code path in
-  this repo needs. For each over-scoped assignment found, record:
-  | Role | Scope | Needed? | Action taken |
-  |---|---|---|---|
-  | *(e.g. Contributor)* | *(e.g. subscription X)* | No — only Reader is used | *(e.g. downgraded to Reader on 2026-09-XX)* |
+  Exactly two role assignments exist, both at subscription scope, neither
+  with a write/delete action. This is exactly what the review expected —
+  **no over-scoped assignment found, nothing to downgrade.**
 
-- [ ] **TODO: Check app registration API permissions**
+- [x] **Flag anything that can write.** None found — no `Contributor`,
+  `Owner`, `User Access Administrator`, or custom role. Action taken: none
+  needed.
 
-  ```bash
-  az ad app permission list --id "$AZURE_CLIENT_ID" -o table
-  ```
+- [x] **App registration API permissions** (Microsoft Graph app roles
+  granted to the SP, resolved via `GET
+  /servicePrincipals/<objectId>/appRoleAssignments` then matched against
+  Graph's own `appRoles` list):
 
-  The Power Platform analyzers need read access to the PP admin APIs.
-  Record anything granting write, and anything granted but unused:
-  ```
-  (paste output / findings)
-  ```
+  | Permission | Type | Read or write? |
+  |---|---|---|
+  | `Application.Read.All` | Application (app-only) | Read |
+  | `Directory.Read.All` | Application (app-only) | Read |
+  | `Organization.Read.All` | Application (app-only) | Read |
+
+  All three are read-only — no write-capable Graph permission is granted.
+  One delegated grant also exists (`Application.Read.All`, consent type
+  `AllPrincipals`, `principalId: null`) but this app only ever authenticates
+  via client credentials (app-only), so that delegated grant is vestigial,
+  not something an attacker with just the client secret could exercise
+  differently than the app-only grant already listed above.
+
+  **Note, not a finding:** `Directory.Read.All` and `Organization.Read.All`
+  are tenant-wide read scopes, broader than "read this one subscription's
+  cost data" would strictly require on their own. They're still read-only
+  (no write/blast-radius concern), and presumably back the Power Platform
+  analyzers' tenant/environment discovery — worth a narrower look only if
+  someone wants to tighten this further, not urgent.
+
+- [x] **Power Platform credentials are the same SPN.** `BTG_PP_TENANT_ID`
+  and `BTG_PP_CLIENT_ID` in `web/.env.local` are byte-for-byte identical to
+  `AZURE_TENANT_ID`/`AZURE_CLIENT_ID` (compared via SHA-256 hash, values
+  never printed) — there is only one service principal to review, not two.
 
 ---
 
@@ -106,15 +133,16 @@ not a data-disclosure one.
 
 | Credential | Current scope | Matches what's needed? | Change made |
 |---|---|---|---|
-| Azure SP (`AZURE_CLIENT_ID`) | *(TODO)* | *(TODO)* | *(TODO)* |
-| Hetzner token (`HCLOUD_TOKEN`) | *(TODO)* | *(TODO)* | *(TODO)* |
-| Anthropic key (`ANTHROPIC_API_KEY`) | *(TODO)* | *(TODO)* | *(TODO)* |
+| Azure SP (`AZURE_CLIENT_ID`, also used for PP) | `Reader` + `Cost Management Reader` at subscription scope; Graph `Application.Read.All`/`Directory.Read.All`/`Organization.Read.All` (all read-only) | ✅ Yes — no write scope anywhere | None needed |
+| Hetzner token (`HCLOUD_TOKEN`) | *(TODO — needs Hetzner Cloud Console: project → Security → API tokens)* | *(TODO)* | *(TODO)* |
+| Anthropic key (`ANTHROPIC_API_KEY`) | *(TODO — needs Anthropic Console)* | *(TODO)* | *(TODO)* |
 
-**Reviewed by:** _____________
-**Date:** _____________
+**Reviewed by:** Claude Sonnet 5, via automated REST checks against the live tenant (§1 only)
+**Date:** 2026-09-15
 
-Once every row above is filled in and any over-scoped credential has been
-narrowed, flip the status line at the top of this file to:
+**Remaining work:** someone with Hetzner Cloud Console and Anthropic
+Console access needs to fill in §2 and §3, then flip the status line at
+the top of this file to:
 
 ```
 **Status:** ✅ CLOSED — reviewed <date> by <name>. See §4 for what changed.

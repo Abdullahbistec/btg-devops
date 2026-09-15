@@ -18,7 +18,7 @@ Tracked by [docs/superpowers/plans/2026-09-15-security-remediation-index.md](sup
 | CVE-2026-75604 / Next.js (Plan C Task 3) | ✅ Fixed — Next.js 14.2.35 → 15.5.25 on its own branch, React held at 18. Production is Docker/Linux-hosted, so this specific Windows RCE didn't apply, but the other ~20 Next.js advisories `npm audit` had flagged do, regardless of OS. |
 | G1 — `govulncheck` findings (not in original review) | ✅ Fixed — see §3 below. Found while wiring up CI security gates. |
 | M3, roadmap §5 #8 (Plan C Tasks 4–5: CI SHA pinning, Dependabot, security gates) | ⚪ **Moot** — `.github/workflows/*` was removed in a separate, concurrent move to Docker-based deployment. Nothing to pin or gate. |
-| R6 (Plan C Task 6: cloud credential review) | 🔶 **Pending** — template drafted at [docs/cloud-credential-review-2026-09.md](cloud-credential-review-2026-09.md); needs someone with Azure/Hetzner/Anthropic console access to fill it in. |
+| R6 (Plan C Task 6: cloud credential review) | 🟡 **Partially closed** — Azure/Power Platform SPN verified 2026-09-15 via direct REST calls (no over-scoped role or Graph permission found). Hetzner and Anthropic still need console access. See [docs/cloud-credential-review-2026-09.md](cloud-credential-review-2026-09.md). |
 | Roadmap §5 #10, #12 (deferred) | Deliberately out of scope for this programme — see the index's "Deliberately not planned" section. |
 
 **Verified 2026-09-15:** `cd web && npm test` (208/208), `npx tsc --noEmit` (clean), `npm run build` (clean), `npm audit --audit-level=high` (0 findings), `go test ./...` (green), `govulncheck ./...` (0 reachable findings).
@@ -50,7 +50,7 @@ Three issues make the dashboard unsafe to expose on any untrusted network today:
 | Next.js API → Go binary | `execFile` (no shell), creds via env | ✅ good |
 | MCP client → Go `--http` server | Bearer token, `subtle.ConstantTimeCompare` | ✅ good |
 | Go MCP → dashboard `/api/internal/*` | `MCP_INTERNAL_TOKEN`, `timingSafeEqual` | ✅ good |
-| CLI → Azure / Hetzner / Power Platform | SPN client secret + Hetzner token from env | ⚠️ blast radius unreviewed (R6) |
+| CLI → Azure / Hetzner / Power Platform | SPN client secret + Hetzner token from env | ✅ SPN verified least-privilege; ⚠️ Hetzner token scope still unreviewed (R6) |
 
 **Route inventory (authorization posture)**
 
@@ -290,7 +290,7 @@ Ordered cheap-high-leverage first.
 8. **Pin CI actions to SHAs + least-privilege `permissions:` on `scheduled-audit.yml` + Dependabot (M3).** Add `npm audit` and `govulncheck` as CI gates. *Adopt — low effort.*
 
 ### Later
-9. **Least-privilege review of the Azure SPN and Hetzner token (R6).** Confirm the SPN holds only `Reader` (+ `Cost Management Reader`) and no write/delete; scope the Hetzner token to read-only if the API supports it. *Adopt — this bounds the blast radius if the runner or CI secrets leak; needs cloud-side access to verify, hence Later.* **Tracking:** [docs/cloud-credential-review-2026-09.md](cloud-credential-review-2026-09.md) — template drafted 2026-09-15, still PENDING actual Azure/Hetzner/Anthropic console access to fill in.
+9. **Least-privilege review of the Azure SPN and Hetzner token (R6).** ✅ Azure SPN confirmed 2026-09-15: exactly `Reader` + `Cost Management Reader` at subscription scope, no write/delete, and only read-only Graph permissions (`Application.Read.All`, `Directory.Read.All`, `Organization.Read.All`). 🔶 Hetzner token scope still needs the Cloud Console (no API can report a token's own scope). **Tracking:** [docs/cloud-credential-review-2026-09.md](cloud-credential-review-2026-09.md).
 10. **Real sessions + revocation + MFA posture** — server-side session records (or signed tokens with `exp`/`jti`), a logout that invalidates server-side, and a decision on TOTP vs. email OTP. *Adopt later — larger change; the Now items make the current scheme safe enough in the interim.*
 11. **Security regression tests** — one authz test per route (anonymous → 401/403, viewer → 403 on admin routes) and a secret-leak test asserting no route returns raw error text or secrets. *Adopt — locks in the fixes.*
 12. **Threat-model refresh cadence** — revisit on each new external boundary (new MCP tool, new public route); assign an owner. *Adopt as process.*
@@ -316,6 +316,6 @@ Ordered cheap-high-leverage first.
 8. Create two users (A, B) to check whether any per-user scoping exists once auth is enforced.
 
 ### Could not determine from code alone
-- **R6 — actual Azure RBAC / Hetzner token scope** granted to the runner (needs cloud portal access). Listed as a Later roadmap item.
+- **R6 — Hetzner token scope** specifically (the Azure RBAC half is now verified — see the roadmap item above). The hcloud API has no endpoint that reports a token's own permissions, so this can only be read from the Hetzner Cloud Console.
 - Whether the dashboard is currently exposed publicly or only on localhost/private network — this materially changes the *real-world* severity of C1–C3 (the code-level severity stands regardless).
 - Runtime confirmation of every finding — all are code-reading verdicts; see the live test plan.
