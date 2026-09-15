@@ -143,6 +143,20 @@ async function initSchema(pool: Pool): Promise<void> {
       attempts   INTEGER NOT NULL DEFAULT 0
     );
 
+    -- Fixed-window rate-limit counters. bucket encodes what is being
+    -- limited and for whom, e.g. 'login:ip:203.0.113.4'. window_start is
+    -- the epoch floored to the window size, so a row is one counter for one
+    -- window and the whole check is a single atomic upsert -- no read-then-
+    -- write race, and it holds across instances, which an in-process Map
+    -- would not.
+    CREATE TABLE IF NOT EXISTS rate_limit_hits (
+      bucket       TEXT NOT NULL,
+      window_start TIMESTAMPTZ NOT NULL,
+      count        INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (bucket, window_start)
+    );
+    CREATE INDEX IF NOT EXISTS idx_rate_limit_window ON rate_limit_hits(window_start);
+
     -- Async AI-analysis requests, picked up by a scheduled Claude Code
     -- routine polling through the MCP server (cmd/mcp.go --http) instead of
     -- a synchronous, metered LLM call. See docs/ai-analysis-routine-setup.md.
