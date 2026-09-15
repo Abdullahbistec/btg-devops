@@ -1,0 +1,17 @@
+# Runs the dashboard (with its in-process scheduler, web/lib/scheduler.ts)
+# as a persistent container — the internal replacement for the removed
+# GitHub Actions cron. `restart: always` is what makes this "internal":
+# Docker restarts the container on crash or host reboot, so the 60s poller
+# inside the app keeps running without any external trigger.
+#
+# Points DATABASE_URL at your own Postgres (managed or self-hosted) — this
+# does not bundle a database, since production Postgres is expected to
+# already exist separately (see web/.env.local.example).
+services:
+  btg-devops:
+    build: .
+    restart: always
+    ports:
+      - "3000:3000"
+    env_file:
+      - web/.env.local
