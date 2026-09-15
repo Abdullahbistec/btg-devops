@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createOTP } from '@/lib/otp-store';
 import { sendOTPEmail } from '@/lib/mailer';
 import { getUserByEmail } from '@/lib/db';
-import { verifyPassword, makeSessionToken, requireSessionSecret } from '@/lib/auth';
+import { verifyPassword, makeSessionToken, requireSessionSecret, sessionCookieOptions } from '@/lib/auth';
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -34,8 +34,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Server is not configured for sign-in.' }, { status: 500 });
     }
     const res = NextResponse.json({ ok: true, skipOtp: true });
-    res.cookies.set('btg_session', token, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 8, path: '/' });
-    res.cookies.set('btg_identity', normalEmail, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 8, path: '/' });
+    res.cookies.set('btg_session', token, sessionCookieOptions(60 * 60 * 8));
+    res.cookies.set('btg_identity', normalEmail, sessionCookieOptions(60 * 60 * 8));
     return res;
   }
 
@@ -79,8 +79,6 @@ export async function POST(req: Request) {
   if (devMode && allowDevOtp) payload.devOtp = otp;
 
   const res = NextResponse.json(payload);
-  res.cookies.set('btg_otp_pending', normalEmail, {
-    httpOnly: true, sameSite: 'lax', maxAge: 60 * 10, path: '/',
-  });
+  res.cookies.set('btg_otp_pending', normalEmail, sessionCookieOptions(60 * 10));
   return res;
 }

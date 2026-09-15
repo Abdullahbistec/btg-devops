@@ -51,13 +51,17 @@ describe('POST /api/auth/login — devOtp exposure', () => {
 
   it('does not leak the OTP in production even with BTG_DEV_OTP=1', async () => {
     process.env.BTG_DEV_OTP = '1';
+    // Node's process.env has special defineProperty handling that requires
+    // the full descriptor, not just the fields being changed — omitting
+    // writable/enumerable throws "only accepts a configurable, writable,
+    // and enumerable data descriptor".
     const saved = process.env.NODE_ENV;
-    Object.defineProperty(process.env, 'NODE_ENV', { value: 'production', configurable: true });
+    Object.defineProperty(process.env, 'NODE_ENV', { value: 'production', writable: true, enumerable: true, configurable: true });
     try {
       const body = await (await login(loginRequest())).json();
       expect(body.devOtp).toBeUndefined();
     } finally {
-      Object.defineProperty(process.env, 'NODE_ENV', { value: saved, configurable: true });
+      Object.defineProperty(process.env, 'NODE_ENV', { value: saved, writable: true, enumerable: true, configurable: true });
     }
   });
 

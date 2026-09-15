@@ -34,6 +34,22 @@ export function requireSessionSecret(): string {
   return secret;
 }
 
+/** Shared options for every auth cookie this app sets.
+ *
+ * `secure` is conditional rather than always true because local development
+ * serves plain http://localhost, where a Secure cookie is silently dropped
+ * and login appears to succeed while no session is ever stored. A function
+ * rather than a constant so NODE_ENV is read per call. */
+export function sessionCookieOptions(maxAgeSeconds: number) {
+  return {
+    httpOnly: true as const,
+    sameSite: 'lax' as const,
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: maxAgeSeconds,
+    path: '/' as const,
+  };
+}
+
 /** The plaintext `btg_identity` cookie is not proof of anything by itself —
  * anyone can set it on their own request. `btg_session` is an
  * HMAC(SESSION_SECRET, identity) issued at login (see verify-otp/route.ts);

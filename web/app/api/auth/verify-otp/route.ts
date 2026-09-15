@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
 import { verifyOTP } from '@/lib/otp-store';
-import { makeSessionToken, requireSessionSecret } from '@/lib/auth';
+import { makeSessionToken, requireSessionSecret, sessionCookieOptions } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   const pendingEmail = req.cookies.get('btg_otp_pending')?.value ?? '';
@@ -38,8 +38,8 @@ export async function POST(req: NextRequest) {
   }
 
   const res = NextResponse.json({ ok: true });
-  res.cookies.set('btg_session', token, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 8, path: '/' });
-  res.cookies.set('btg_identity', pendingEmail, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 8, path: '/' });
-  res.cookies.set('btg_otp_pending', '', { maxAge: 0, path: '/' });
+  res.cookies.set('btg_session', token, sessionCookieOptions(60 * 60 * 8));
+  res.cookies.set('btg_identity', pendingEmail, sessionCookieOptions(60 * 60 * 8));
+  res.cookies.set('btg_otp_pending', '', sessionCookieOptions(0));
   return res;
 }
