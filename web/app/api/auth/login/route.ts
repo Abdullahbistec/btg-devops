@@ -67,9 +67,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Failed to send verification email. Check SMTP settings.' }, { status: 502 });
   }
 
-  // In dev mode (no real SMTP) surface the OTP in the response so the UI can show it
+  // Surfacing the OTP in the response bypasses MFA for anyone who can see
+  // that response — and web/app/login/page.tsx forwards it as a query
+  // parameter, so it reaches browser history, Referer headers and access
+  // logs too. "SMTP is unconfigured" is a property of the deployment, not
+  // of the environment, so it is not a safe gate on its own: a production
+  // instance with broken SMTP credentials would hand out the code. Both an
+  // explicit opt-in and a non-production build are now required.
+  const allowDevOtp = process.env.NODE_ENV !== 'production' && process.env.BTG_DEV_OTP === '1';
   const payload: Record<string, unknown> = { ok: true, skipOtp: false };
-  if (devMode) payload.devOtp = otp;
+  if (devMode && allowDevOtp) payload.devOtp = otp;
 
   const res = NextResponse.json(payload);
   res.cookies.set('btg_otp_pending', normalEmail, {
