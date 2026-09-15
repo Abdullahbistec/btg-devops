@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
 import { verifyOTP } from '@/lib/otp-store';
-import { makeSessionToken } from '@/lib/auth';
+import { makeSessionToken, requireSessionSecret } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   const pendingEmail = req.cookies.get('btg_otp_pending')?.value ?? '';
@@ -29,8 +29,13 @@ export async function POST(req: NextRequest) {
   }
 
   // OTP valid — issue session tied to this user's email
-  const secret = process.env.SESSION_SECRET ?? 'btg-devops-default-secret';
-  const token = makeSessionToken(secret, pendingEmail);
+  let token: string;
+  try {
+    token = makeSessionToken(requireSessionSecret(), pendingEmail);
+  } catch (e) {
+    console.error('[auth/verify-otp]', e);
+    return NextResponse.json({ error: 'Server is not configured for sign-in.' }, { status: 500 });
+  }
 
   const res = NextResponse.json({ ok: true });
   res.cookies.set('btg_session', token, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 8, path: '/' });

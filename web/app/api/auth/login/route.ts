@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createOTP } from '@/lib/otp-store';
 import { sendOTPEmail } from '@/lib/mailer';
 import { getUserByEmail } from '@/lib/db';
-import { verifyPassword, makeSessionToken } from '@/lib/auth';
+import { verifyPassword, makeSessionToken, requireSessionSecret } from '@/lib/auth';
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -26,8 +26,13 @@ export async function POST(req: Request) {
     // getVerifiedIdentity() re-derives from the btg_identity cookie below —
     // it used to sign over the ADMIN_USERNAME string instead, which never
     // matched the email-keyed verification a route-level check would do.
-    const secret = process.env.SESSION_SECRET ?? 'btg-devops-default-secret';
-    const token  = makeSessionToken(secret, normalEmail);
+    let token: string;
+    try {
+      token = makeSessionToken(requireSessionSecret(), normalEmail);
+    } catch (e) {
+      console.error('[auth/login]', e);
+      return NextResponse.json({ error: 'Server is not configured for sign-in.' }, { status: 500 });
+    }
     const res = NextResponse.json({ ok: true, skipOtp: true });
     res.cookies.set('btg_session', token, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 8, path: '/' });
     res.cookies.set('btg_identity', normalEmail, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 8, path: '/' });

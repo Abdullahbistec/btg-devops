@@ -22,6 +22,18 @@ export function makeSessionToken(secret: string, email: string): string {
   return createHmac('sha256', secret).update(email).digest('hex');
 }
 
+/** The secret used to sign sessions. Throws rather than returning a default:
+ * the old `?? 'btg-devops-default-secret'` fallback is committed to this
+ * repository, so a deployment that forgot the variable was handing out
+ * sessions anyone could forge. A loud 500 at login is the correct failure. */
+export function requireSessionSecret(): string {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) {
+    throw new Error('SESSION_SECRET is not set — refusing to issue a session');
+  }
+  return secret;
+}
+
 /** The plaintext `btg_identity` cookie is not proof of anything by itself —
  * anyone can set it on their own request. `btg_session` is an
  * HMAC(SESSION_SECRET, identity) issued at login (see verify-otp/route.ts);
