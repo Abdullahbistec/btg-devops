@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDB, listAudits } from '@/lib/db';
 import { PP_SERVICE_LABELS, HETZNER_SERVICE_LABELS, PP_COMMANDS, AZURE_COMMANDS, HETZNER_COMMANDS } from '@/lib/btg-runner';
+import { isAuthenticatedRequest } from '@/lib/auth';
 
 // SQL IN-lists per provider — used to scope queries. "azure" is everything
 // NOT in PP or Hetzner's label sets, rather than its own explicit list,
@@ -17,6 +18,9 @@ function buildScopeFilter(scope: string, tableAlias = 'f'): string {
 }
 
 export async function GET(req: NextRequest) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const auditId = req.nextUrl.searchParams.get('audit_id') ?? undefined;
     const scope   = req.nextUrl.searchParams.get('scope') ?? '';

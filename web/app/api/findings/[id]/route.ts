@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDB } from '@/lib/db';
+import { isAuthenticatedRequest } from '@/lib/auth';
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const db = await getDB();
     const { rows } = await db.query('SELECT * FROM findings WHERE id = $1', [params.id]);
@@ -15,6 +19,9 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 const MAX_TICKET_REF_LENGTH = 200;
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const body = await req.json().catch(() => ({}));
     const { remediation_status, support_ticket_ref } = body as { remediation_status?: string; support_ticket_ref?: string };

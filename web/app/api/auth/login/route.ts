@@ -1,13 +1,8 @@
 import { NextResponse } from 'next/server';
-import { createHmac } from 'crypto';
 import { createOTP } from '@/lib/otp-store';
 import { sendOTPEmail } from '@/lib/mailer';
 import { getUserByEmail } from '@/lib/db';
-import { verifyPassword } from '@/lib/auth';
-
-function makeSessionToken(secret: string, username: string) {
-  return createHmac('sha256', secret).update(username).digest('hex');
-}
+import { verifyPassword, makeSessionToken } from '@/lib/auth';
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -26,10 +21,13 @@ export async function POST(req: Request) {
     if (password !== adminPass) {
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
     }
-    // Admin bypasses OTP — set session directly
-    const secret   = process.env.SESSION_SECRET ?? 'btg-devops-default-secret';
-    const username = process.env.ADMIN_USERNAME ?? 'admin';
-    const token    = makeSessionToken(secret, username);
+    // Admin bypasses OTP — set session directly. Signed over the identity
+    // email (normalEmail), matching every other issuer (verify-otp) and what
+    // getVerifiedIdentity() re-derives from the btg_identity cookie below —
+    // it used to sign over the ADMIN_USERNAME string instead, which never
+    // matched the email-keyed verification a route-level check would do.
+    const secret = process.env.SESSION_SECRET ?? 'btg-devops-default-secret';
+    const token  = makeSessionToken(secret, normalEmail);
     const res = NextResponse.json({ ok: true, skipOtp: true });
     res.cookies.set('btg_session', token, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 8, path: '/' });
     res.cookies.set('btg_identity', normalEmail, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 8, path: '/' });

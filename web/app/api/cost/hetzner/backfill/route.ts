@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runHetznerCostHistory } from '@/lib/btg-runner';
 import { saveHetznerReconstructedHistory } from '@/lib/db';
+import { isAdminRequest } from '@/lib/auth';
 
 const DEFAULT_DAYS = 180;
 const MAX_DAYS = 730;
@@ -23,6 +24,9 @@ const MAX_DAYS = 730;
  * a day always wins over a derived one.
  */
 export async function POST(req: NextRequest) {
+  if (!(await isAdminRequest(req))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
   try {
     const body = await req.json().catch(() => ({}));
     const requested = Math.floor(Number(body?.days) || DEFAULT_DAYS);

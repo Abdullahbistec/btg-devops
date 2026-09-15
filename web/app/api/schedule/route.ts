@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDB } from '@/lib/db';
 import { v4 as uuidv4 } from 'uuid';
-import { isAdminRequest } from '@/lib/auth';
+import { isAdminRequest, isAuthenticatedRequest } from '@/lib/auth';
 import { computeNextRun } from '@/lib/schedule-time';
 
 interface Schedule {
@@ -17,7 +17,10 @@ interface Schedule {
   created_at: string;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const db = await getDB();
     const { rows } = await db.query('SELECT * FROM schedules ORDER BY created_at DESC');

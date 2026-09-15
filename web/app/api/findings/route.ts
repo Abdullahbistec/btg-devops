@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDB } from '@/lib/db';
 import { PP_SERVICE_LABELS, HETZNER_SERVICE_LABELS, PP_COMMANDS, AZURE_COMMANDS, HETZNER_COMMANDS } from '@/lib/btg-runner';
 import type { Finding } from '@/lib/db';
+import { isAuthenticatedRequest } from '@/lib/auth';
 
 const PP_LIST      = [...PP_SERVICE_LABELS].map(s => `'${s.replace(/'/g, "''")}'`).join(',');
 const HETZNER_LIST = [...HETZNER_SERVICE_LABELS].map(s => `'${s.replace(/'/g, "''")}'`).join(',');
@@ -26,6 +27,9 @@ async function resolveLatestAuditForScope(scope: string): Promise<string | undef
 }
 
 export async function GET(req: NextRequest) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const severity = req.nextUrl.searchParams.get('severity') ?? '';
     const scope    = req.nextUrl.searchParams.get('scope') ?? '';

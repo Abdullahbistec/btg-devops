@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getHetznerCostHistory } from '@/lib/db';
+import { isAuthenticatedRequest } from '@/lib/auth';
 
 const DEFAULT_DAYS = 90;
 
@@ -15,7 +16,10 @@ const DEFAULT_DAYS = 90;
 // Hetzner. History accumulates from the first refresh onward and cannot be
 // backfilled: the hcloud API has no invoice or spend-history endpoint, so
 // there is no past to fetch.
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const url = new URL(req.url);
     const raw = url.searchParams.get('days');

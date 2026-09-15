@@ -1,8 +1,12 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { execFile } from 'child_process';
 import path from 'path';
+import { isAdminRequest } from '@/lib/auth';
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  if (!(await isAdminRequest(req))) {
+    return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
+  }
   const btgPath = process.env.BTG_DEVOPS_PATH
     ? path.resolve(process.cwd(), process.env.BTG_DEVOPS_PATH)
     : path.resolve(process.cwd(), '..', 'btg-devops.exe');

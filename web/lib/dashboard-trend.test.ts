@@ -1,9 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { getDB } from './db';
+import { makeSessionToken } from './auth';
 import { GET } from '@/app/api/dashboard/route';
 
 const SUB = 'sub-trend-test';
+const SESSION_SECRET = 'test-session-secret';
+const ADMIN_EMAIL = 'admin@example.com';
 
 /** Seeds `count` completed audits, oldest first, with total_findings equal to
  * the audit's 1-based position so a pairing is trivially readable: a pair
@@ -35,17 +38,28 @@ async function seedAudits(count: number) {
 }
 
 async function trendFrom() {
-  const res = await GET(new NextRequest('http://localhost/api/dashboard'));
+  const cookie = `btg_identity=${ADMIN_EMAIL}; btg_session=${makeSessionToken(SESSION_SECRET, ADMIN_EMAIL)}`;
+  const res = await GET(new NextRequest('http://localhost/api/dashboard', { headers: { cookie } }));
   const body = await res.json();
   if (res.status !== 200) throw new Error(`dashboard returned ${res.status}: ${body?.error}`);
   return body.trend as { total_findings: number; prev_total_findings: number | null }[];
 }
 
 describe('dashboard trend — window pairing', () => {
+  const ORIGINAL_ADMIN = process.env.ADMIN_EMAIL;
+  const ORIGINAL_SECRET = process.env.SESSION_SECRET;
+
   beforeEach(async () => {
+    process.env.ADMIN_EMAIL = ADMIN_EMAIL;
+    process.env.SESSION_SECRET = SESSION_SECRET;
     const db = await getDB();
     await db.query('DELETE FROM findings');
     await db.query('DELETE FROM audits');
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_ADMIN === undefined) delete process.env.ADMIN_EMAIL; else process.env.ADMIN_EMAIL = ORIGINAL_ADMIN;
+    if (ORIGINAL_SECRET === undefined) delete process.env.SESSION_SECRET; else process.env.SESSION_SECRET = ORIGINAL_SECRET;
   });
 
   it('pairs each run with the one exactly 10 runs earlier when both windows are full', async () => {

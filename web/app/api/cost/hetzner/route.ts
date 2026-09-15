@@ -1,10 +1,14 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getHetznerCostSnapshot } from '@/lib/db';
+import { isAuthenticatedRequest } from '@/lib/auth';
 
 // Reads only the stored snapshot — never calls Hetzner. Mirrors
 // /api/cost/spend. Unlike Azure this figure is a list-price estimate, never
 // a bill, and `estimate: true` travels with it so the UI cannot forget.
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const snap = await getHetznerCostSnapshot();
     if (!snap) {

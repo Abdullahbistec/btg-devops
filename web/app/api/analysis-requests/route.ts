@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAnalysisRequest } from '@/lib/db';
 import { triggerQueueDrain } from '@/lib/routine-trigger';
+import { isAuthenticatedRequest } from '@/lib/auth';
 
 /** Creates a pending AI-analysis request. A Claude Code agent polling through
  * the MCP server (cmd/mcp.go --http) picks it up, reasons over the audit's
  * findings, and writes the result back — no synchronous LLM call happens in
  * this request. See docs/ai-analysis-routine-setup.md. */
 export async function POST(req: NextRequest) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const body = await req.json();
     const auditId: string = body?.auditId || '';

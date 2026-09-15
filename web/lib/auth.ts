@@ -22,17 +22,54 @@ export function makeSessionToken(secret: string, email: string): string {
   return createHmac('sha256', secret).update(email).digest('hex');
 }
 
-export async function getRequestRole(req: NextRequest): Promise<'admin' | 'viewer'> {
+/** The plaintext `btg_identity` cookie is not proof of anything by itself —
+ * anyone can set it on their own request. `btg_session` is an
+ * HMAC(SESSION_SECRET, identity) issued at login (see verify-otp/route.ts);
+ * only a match here means the caller actually holds a session this server
+ * issued. Returns '' (never throws) on any missing/mismatched piece,
+ * including an unset SESSION_SECRET, so a misconfigured deployment fails
+ * closed instead of trusting the cookie alone. */
+export function getVerifiedIdentity(req: NextRequest): string {
   const identity = (req.cookies.get('btg_identity')?.value ?? '').toLowerCase();
+  const session = req.cookies.get('btg_session')?.value ?? '';
+  if (!identity || !session) return '';
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) return '';
+  const expected = makeSessionToken(secret, identity);
+  const a = Buffer.from(session);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return '';
+  return identity;
+}
+
+async function resolveIdentity(req: NextRequest): Promise<{ email: string; role: 'admin' | 'viewer' } | null> {
+  const identity = getVerifiedIdentity(req);
+  if (!identity) return null;
   const adminEmail = (process.env.ADMIN_EMAIL ?? '').toLowerCase();
-  if (!identity || (adminEmail && identity === adminEmail)) return 'admin';
+  if (adminEmail && identity === adminEmail) return { email: identity, role: 'admin' };
   const user = await getUserByEmail(identity);
-  if (!user || user.status !== 'active') return 'viewer';
-  return user.role === 'admin' ? 'admin' : 'viewer';
+  if (!user || user.status !== 'active') return null;
+  return { email: identity, role: user.role === 'admin' ? 'admin' : 'viewer' };
+}
+
+/** Defaults to 'viewer' — including for a request with no session at all —
+ * so callers must treat 'viewer' as "not proven to be admin" rather than
+ * "logged in as a non-admin". Use isAuthenticatedRequest() where the
+ * distinction between "no session" and "a real viewer session" matters. */
+export async function getRequestRole(req: NextRequest): Promise<'admin' | 'viewer'> {
+  return (await resolveIdentity(req))?.role ?? 'viewer';
 }
 
 export async function isAdminRequest(req: NextRequest): Promise<boolean> {
   return (await getRequestRole(req)) === 'admin';
+}
+
+/** True only for a verified session belonging to an active user (or the
+ * configured ADMIN_EMAIL) — admin or viewer role either one. Use this to
+ * guard routes that any signed-in user may reach; use isAdminRequest for
+ * admin-only routes. */
+export async function isAuthenticatedRequest(req: NextRequest): Promise<boolean> {
+  return (await resolveIdentity(req)) !== null;
 }
 
 /**

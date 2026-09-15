@@ -1,11 +1,7 @@
 import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
-import { createHmac } from 'crypto';
 import { verifyOTP } from '@/lib/otp-store';
-
-function makeSessionToken(secret: string, identity: string) {
-  return createHmac('sha256', secret).update(identity).digest('hex');
-}
+import { makeSessionToken } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   const pendingEmail = req.cookies.get('btg_otp_pending')?.value ?? '';
