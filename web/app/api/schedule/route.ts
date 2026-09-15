@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDB } from '@/lib/db';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { isAdminRequest, isAuthenticatedRequest } from '@/lib/auth';
 import { computeNextRun } from '@/lib/schedule-time';
 import { apiError } from '@/lib/api-error';
@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     const { name, frequency, hour, times_per_day, subscription_id } = parsed.data;
     const timesPerDay = times_per_day ?? 1;
     const db = await getDB();
-    const id = uuidv4();
+    const id = randomUUID();
     const next_run = computeNextRun(frequency ?? 'daily', Number(hour ?? 2), new Date(), timesPerDay);
     await db.query(
       `INSERT INTO schedules (id, name, frequency, hour, times_per_day, enabled, next_run_at, subscription_id)

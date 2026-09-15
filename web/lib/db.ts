@@ -1,5 +1,5 @@
 import { Pool } from 'pg';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { encryptSecret } from './crypto';
 
 let _pool: Pool | null = null;
@@ -301,7 +301,7 @@ async function initSchema(pool: Pool): Promise<void> {
       `INSERT INTO subscriptions (id, name, subscription_id, tenant_id, client_id, client_secret)
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [
-        uuidv4(),
+        randomUUID(),
         'Bistec Global Production',
         process.env.AZURE_SUBSCRIPTION_ID || '',
         process.env.AZURE_TENANT_ID || '',
@@ -365,7 +365,7 @@ export async function createSubscription(
   data: Omit<Subscription, 'id' | 'created_at' | 'last_audit_at' | 'is_active' | 'monthly_budget'> & { client_secret?: string }
 ): Promise<Subscription> {
   const db = await getDB();
-  const id = uuidv4();
+  const id = randomUUID();
   await db.query(
     `INSERT INTO subscriptions (id, name, subscription_id, tenant_id, client_id, client_secret)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -412,7 +412,7 @@ export async function getAudit(id: string): Promise<Audit | null> {
 
 export async function createAudit(subscriptionId: string, name: string, plannedCommands: string[] = []): Promise<Audit> {
   const db = await getDB();
-  const id = uuidv4();
+  const id = randomUUID();
   await db.query(
     `INSERT INTO audits (id, subscription_id, name, status, started_at, total_steps, commands_run)
      VALUES ($1, $2, $3, 'running', to_char(now(), 'YYYY-MM-DD HH24:MI:SS'), $4, $5)`,
@@ -524,7 +524,7 @@ export async function insertFindings(auditId: string, findings: Omit<Finding, 'i
       await client.query(
         `INSERT INTO findings (id, audit_id, service, resource, environment, severity, category, description, recommendation, owner, location, monthly_cost, monthly_saving, confidence, reasoning, currency)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-        [uuidv4(), auditId, f.service, f.resource, f.environment, f.severity, f.category, f.description, f.recommendation, f.owner || '', f.location || '', f.monthly_cost ?? null, f.monthly_saving ?? null, f.confidence ?? null, f.reasoning || null, f.currency ?? null]
+        [randomUUID(), auditId, f.service, f.resource, f.environment, f.severity, f.category, f.description, f.recommendation, f.owner || '', f.location || '', f.monthly_cost ?? null, f.monthly_saving ?? null, f.confidence ?? null, f.reasoning || null, f.currency ?? null]
       );
     }
     await client.query('COMMIT');
@@ -626,7 +626,7 @@ export interface AnalysisRequest {
 
 export async function createAnalysisRequest(auditId: string, scope: string): Promise<AnalysisRequest> {
   const db = await getDB();
-  const id = uuidv4();
+  const id = randomUUID();
   await db.query(`INSERT INTO analysis_requests (id, audit_id, scope) VALUES ($1, $2, $3)`, [id, auditId, scope]);
   return (await getAnalysisRequest(id))!;
 }
@@ -773,7 +773,7 @@ export async function saveHetznerReconstructedHistory(
          SELECT 1 FROM hetzner_cost_snapshots
          WHERE (fetched_at AT TIME ZONE 'UTC')::date = $4::date
        )`,
-      [uuidv4(), p.total_monthly, p.currency, p.day]
+      [randomUUID(), p.total_monthly, p.currency, p.day]
     );
   }
 }
@@ -816,7 +816,7 @@ export async function saveHetznerCostSnapshot(data: { totalMonthly: number; curr
   await db.query(
     `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, fetched_at)
      VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-    [uuidv4(), data.totalMonthly, data.currency, JSON.stringify(data.byCategory), JSON.stringify(data.byType), JSON.stringify(data.unpriced ?? [])]
+    [randomUUID(), data.totalMonthly, data.currency, JSON.stringify(data.byCategory), JSON.stringify(data.byType), JSON.stringify(data.unpriced ?? [])]
   );
 }
 
@@ -885,14 +885,14 @@ export interface CostFetchRequest {
 
 export async function createCostFetchRequest(subscriptionId: string): Promise<CostFetchRequest> {
   const db = await getDB();
-  const id = uuidv4();
+  const id = randomUUID();
   await db.query(`INSERT INTO cost_fetch_requests (id, subscription_id) VALUES ($1, $2)`, [id, subscriptionId]);
   return (await getCostFetchRequest(id))!;
 }
 
 export async function createCostBackfillRequest(subscriptionId: string, months: number): Promise<CostFetchRequest> {
   const db = await getDB();
-  const id = uuidv4();
+  const id = randomUUID();
   await db.query(`INSERT INTO cost_fetch_requests (id, subscription_id, type, months) VALUES ($1, $2, 'backfill', $3)`, [id, subscriptionId, months]);
   return (await getCostFetchRequest(id))!;
 }

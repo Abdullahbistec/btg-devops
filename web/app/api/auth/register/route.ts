@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { getUserByEmail, createUser } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 import { sendRegistrationNotification } from '@/lib/mailer';
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'This email is already registered' }, { status: 409 });
   }
 
-  const id = uuidv4();
+  const id = randomUUID();
   await createUser(id, normalEmail, name.trim(), hashPassword(password));
 
   // Notify admin

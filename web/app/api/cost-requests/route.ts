@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import {
   getDB, getSubscription, createCostFetchRequest, createCostBackfillRequest, getPendingCostFetchRequestFor,
   completeCostFetchRequest, failCostFetchRequest, saveHetznerCostSnapshot,
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
         // Hetzner) — the Hetzner refresh completes synchronously above, so a
         // caller has no reason to poll it, but a shape that looks like the
         // Azure response is one a polling caller can't mistake for "no id".
-        return NextResponse.json({ id: uuidv4(), status: 'done' }, { status: 202 });
+        return NextResponse.json({ id: randomUUID(), status: 'done' }, { status: 202 });
       } catch (e) {
         return apiError(e, 'POST /api/cost-requests (hetzner refresh)');
       }
