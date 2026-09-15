@@ -228,6 +228,18 @@ Tag references are mutable; a compromised third-party action tag (notably the th
 
 ---
 
+### 🟢 G1 — `govulncheck` findings in the Go module (not in the original static review)
+
+- **Severity:** Low-Medium (mostly stdlib DoS/parsing bugs, none reachable with attacker-controlled input in this codebase's call paths) · **FIXED 2026-09-15**
+- **Found while executing** `docs/superpowers/plans/2026-09-15-dependency-supply-chain.md` Task 5 — this review's own §6 method note says "no code changes," so `govulncheck` was never run against `cmd/` until the CI gate work called for it.
+
+`govulncheck ./...` reported 9 reachable vulnerabilities: 6 in the Go 1.26.4 standard library (`net/url`, `crypto/tls` ×2, `net/http` ×2, `encoding/xml`, `encoding/asn1` — fixed in go1.26.5/.6) and 2 in `golang.org/x/net` (idna Punycode bypass, HTTP/2 infinite loop) plus 1 in `golang.org/x/text` (infinite loop on invalid input), all reachable from `cmd/powerplatform.go`'s Azure AD token/HTTP calls and `cmd/mcp.go`'s `--http` listener.
+
+- **Fix:** `go get -u golang.org/x/net golang.org/x/text` (→ v0.59.0 / v0.42.0) plus `go mod tidy`; added `toolchain go1.26.6` to `go.mod` to pin a patched Go toolchain rather than relying on whatever the CI runner or a contributor's machine happens to have installed. `govulncheck ./...` now reports 0 reachable vulnerabilities; `go build ./...` and `go test ./...` both clean.
+- **Effort:** S.
+
+---
+
 ## 4. What's already done well
 
 Not padding — these are genuinely correct and worth keeping:
