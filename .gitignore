@@ -21,3 +21,6 @@ web/tsconfig.tsbuildinfo
 # scripts/pp-governance-agent.js output — real customer findings, never committed
 /out/
 /state/
+
+# R6 cloud-credential-review artifact — principal/role IDs, not for commit
+web/role_assignments.json
