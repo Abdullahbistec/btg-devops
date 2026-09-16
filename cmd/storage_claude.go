@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -17,8 +18,16 @@ import (
 // claudeAnalysisTimeout bounds the spawned claude process itself (the
 // exec.CommandContext deadline inside defaultClaudeSpawn). It is a var (not
 // a const) so tests can shrink it and keep the timeout-fallback test fast
-// without a real 60s wait.
-var claudeAnalysisTimeout = 60 * time.Second
+// without a real wait.
+//
+// 60s (the original default) was never enough to reach a real conclusion —
+// a live run against 20 real storage accounts took 4m14s (254s) end to end,
+// submitting genuine Claude-judged findings; with 60s or even 180s the
+// process was still killed mid-run every time, silently falling back to
+// rules despite Claude never actually failing. 300s gives some margin over
+// that one observed data point; it is not yet validated against the other
+// 18 services Phase 2 will add, some of which may need more.
+var claudeAnalysisTimeout = 300 * time.Second
 
 // claudeHandoffGracePeriod bounds how long runStorageAnalysis waits for the
 // handoff file *after* spawn has already returned successfully. defaultClaudeSpawn's
@@ -73,11 +82,38 @@ func defaultClaudeSpawn(promptPath, requestID, rawDataPath string, timeout time.
 	// spawns `claude -p` with MCP tool access (it also relies on --allowedTools
 	// alone to pre-approve tools without an interactive permission prompt — no
 	// --dangerously-skip-permissions or similar is needed here either).
-	c := exec.CommandContext(ctx, "claude", "-p", fullPrompt,
+	//
+	// --add-dir os.TempDir() is required too: rawDataPath lives in the OS temp
+	// directory (see runStorageAnalysis), outside the project's working
+	// directory that Claude Code's Read tool is sandboxed to by default.
+	// Without this, the spawned agent correctly refuses to read rawDataPath,
+	// exits 0 having never called submit_findings, and the caller silently
+	// falls back to rule-based analysis — every single time, on any machine.
+	//
+	// The prompt itself is piped via Stdin, not passed as a "-p <prompt>"
+	// argument: `claude` on Windows resolves to a .cmd shim, and Go's
+	// os/exec routes .cmd/.bat targets through cmd.exe — whose command-line
+	// parsing truncates an argument at its first embedded newline,
+	// regardless of Go's own (correct) quoting. A multi-paragraph prompt
+	// like docs/prompts/storage.md silently arrived as just its first line,
+	// which claude reasonably read as an ambiguous one-word request and
+	// asked for clarification instead of ever calling submit_findings —
+	// exiting 0, so this looked identical to a clean no-op run. Stdin never
+	// passes through cmd.exe's argument parser, so this sidesteps the
+	// truncation entirely rather than working around it.
+	c := exec.CommandContext(ctx, "claude", "-p",
 		"--mcp-config", mcpConfigPath,
 		"--strict-mcp-config",
+		"--add-dir", os.TempDir(),
 		"--allowedTools", "mcp__btg-devops__submit_findings,Read",
 	)
+	c.Stdin = strings.NewReader(fullPrompt)
+	// Without this, Cmd.Run() discards both to /dev/null (Go's default when
+	// Stdout/Stderr are nil) — this was the exact reason the earlier missing
+	// --add-dir bug was invisible: claude's own explanation of why it
+	// couldn't proceed went nowhere anyone would see it.
+	c.Stdout = os.Stderr
+	c.Stderr = os.Stderr
 	return c.Run()
 }
 
