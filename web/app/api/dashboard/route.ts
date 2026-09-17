@@ -139,7 +139,7 @@ export async function GET(req: NextRequest) {
       : null;
 
     const subsRes = await db.query('SELECT id, name, is_active FROM subscriptions');
-    const subs = subsRes.rows as { id: string; name: string; is_active: number }[];
+    const subs = subsRes.rows as { id: string; name: string; is_active: boolean }[];
 
     const recentAudits = (await listAudits()).slice(0, 8);
 

@@ -30,7 +30,7 @@ interface Subscription {
   subscription_id: string;
   tenant_id: string;
   client_id: string;
-  is_active: number;
+  is_active: boolean;
   monthly_budget: number | null;
 }
 
@@ -40,7 +40,7 @@ interface Schedule {
   frequency: string;
   hour: number;
   times_per_day: number;
-  enabled: number;
+  enabled: boolean;
   last_run_at: string | null;
   next_run_at: string | null;
 }
@@ -178,8 +178,8 @@ export default function SettingsPage() {
     setTimeout(() => setAddingSchedMsg(''), 3000);
   }
 
-  async function toggleSchedule(id: string, enabled: number) {
-    await fetch('/api/schedule', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, enabled: enabled ? 0 : 1 }) });
+  async function toggleSchedule(id: string, enabled: boolean) {
+    await fetch('/api/schedule', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, enabled: !enabled }) });
     fetch('/api/schedule').then(r => r.json()).then(data => setSchedules(Array.isArray(data) ? data : []));
   }
 

@@ -17,7 +17,7 @@ interface DashData {
   byCategory: { category: string; count: number }[];
   trend: { id: string; name: string; started_at: string; total_findings: number; critical_count: number; warning_count: number; info_count: number; prev_total_findings: number | null }[];
   trendChangePct: number | null;
-  subscriptions: { id: string; name: string; is_active: number }[];
+  subscriptions: { id: string; name: string; is_active: boolean }[];
   recentAudits: { id: string; name: string; status: string; started_at: string; total_findings: number; critical_count: number; warning_count: number }[];
   resolvedAuditId: string;
   ppReady: boolean;

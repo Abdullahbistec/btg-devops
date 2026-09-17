@@ -24,7 +24,7 @@ interface ScheduleRow {
   frequency: string;
   hour: number;
   times_per_day: number;
-  enabled: number;
+  enabled: boolean;
   subscription_id: string | null;
 }
 
@@ -34,7 +34,7 @@ async function runDueSchedules() {
   try {
     const { rows } = await db.query(
       `SELECT id, name, frequency, hour, times_per_day, enabled, subscription_id FROM schedules
-       WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ${NOW_UTC_SQL}`
+       WHERE enabled = true AND next_run_at IS NOT NULL AND next_run_at <= ${NOW_UTC_SQL}`
     );
     due = rows;
   } catch (e) {
@@ -83,7 +83,7 @@ async function runDailyCostRefresh() {
   let today: string;
   try {
     const [subsRes, todayRes] = await Promise.all([
-      db.query(`SELECT id, name FROM subscriptions WHERE is_active = 1`),
+      db.query(`SELECT id, name FROM subscriptions WHERE is_active = true`),
       db.query(`SELECT to_char(now(), 'YYYY-MM-DD') AS today`),
     ]);
     subs = subsRes.rows;
@@ -162,7 +162,7 @@ async function runDailyBackfillHeal() {
   const db = await getDB();
   let subs: { id: string; name: string }[];
   try {
-    const { rows } = await db.query(`SELECT id, name FROM subscriptions WHERE is_active = 1`);
+    const { rows } = await db.query(`SELECT id, name FROM subscriptions WHERE is_active = true`);
     subs = rows;
   } catch (e) {
     console.error('[scheduler] failed to query subscriptions for daily backfill heal:', e);
@@ -234,6 +234,33 @@ async function runSchedulerCycle() {
   await healStaleAudits().catch(e => console.error('[scheduler] stale audit heal poll failed:', e));
 }
 
+// Distinct from the migrations advisory key. Serialises the whole cycle ACROSS
+// instances: createSingleFlightRunner only guards one process, so a
+// horizontally-scaled deploy would otherwise run every schedule and cost
+// refresh N times over. pg_try_advisory_lock is non-blocking — a second
+// instance whose lock attempt fails simply skips this tick (it re-checks in
+// 60s) rather than queueing behind the first. (Backend review E-4b.)
+const SCHEDULER_LOCK_KEY = 727315;
+
+async function withSchedulerLock(fn: () => Promise<void>): Promise<void> {
+  const db = await getDB();
+  const client = await db.connect();
+  try {
+    const { rows } = await client.query('SELECT pg_try_advisory_lock($1) AS ok', [SCHEDULER_LOCK_KEY]);
+    if (!rows[0]?.ok) {
+      console.log('[scheduler] another instance holds the cycle lock — skipping this tick');
+      return;
+    }
+    try {
+      await fn();
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [SCHEDULER_LOCK_KEY]).catch(() => {});
+    }
+  } finally {
+    client.release();
+  }
+}
+
 let started = false;
 
 /** Starts the in-process schedule poller. Idempotent — safe to call multiple
@@ -249,7 +276,7 @@ export function startScheduler() {
   // interval. Without this guard, the next tick starts a second cycle on top
   // of the first — the same pile-up this whole restructure exists to avoid,
   // just moved from "within one tick" to "across ticks".
-  const runCycle = createSingleFlightRunner(runSchedulerCycle);
+  const runCycle = createSingleFlightRunner(() => withSchedulerLock(runSchedulerCycle));
 
   setInterval(() => { runCycle(); }, POLL_INTERVAL_MS);
   // Also do an immediate check on startup rather than waiting a full interval.

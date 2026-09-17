@@ -42,6 +42,32 @@ export const MIGRATIONS: Migration[] = [
       await c.query(`CREATE INDEX IF NOT EXISTS idx_findings_remediation ON findings(remediation_status);`);
     },
   },
+  {
+    // INTEGER 0/1 flags → real boolean (E-7). Guarded so it is a no-op if the
+    // column is already boolean (fresh DB whose baseline shipped boolean, or a
+    // re-run), and only converts a column that is still integer. USING (x <> 0)
+    // maps 1→true, 0→false.
+    version: '0002_boolean_flags',
+    up: async (c) => {
+      await c.query(`
+        DO $$
+        BEGIN
+          IF (SELECT data_type FROM information_schema.columns
+              WHERE table_name = 'subscriptions' AND column_name = 'is_active') = 'integer' THEN
+            ALTER TABLE subscriptions ALTER COLUMN is_active DROP DEFAULT;
+            ALTER TABLE subscriptions ALTER COLUMN is_active TYPE boolean USING (is_active <> 0);
+            ALTER TABLE subscriptions ALTER COLUMN is_active SET DEFAULT true;
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns
+              WHERE table_name = 'schedules' AND column_name = 'enabled') = 'integer' THEN
+            ALTER TABLE schedules ALTER COLUMN enabled DROP DEFAULT;
+            ALTER TABLE schedules ALTER COLUMN enabled TYPE boolean USING (enabled <> 0);
+            ALTER TABLE schedules ALTER COLUMN enabled SET DEFAULT true;
+          END IF;
+        END $$;
+      `);
+    },
+  },
 ];
 
 /** Applies every migration not yet recorded in schema_migrations, in order,

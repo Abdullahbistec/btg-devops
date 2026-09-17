@@ -32,7 +32,7 @@ export async function executeAudit(
   name?: string
 ): Promise<{ auditId: string }> {
   const db = await getDB();
-  const activeRes = await db.query("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1");
+  const activeRes = await db.query("SELECT id FROM subscriptions WHERE is_active = true ORDER BY created_at LIMIT 1");
   const resolvedSubId: string = subscriptionId || (activeRes.rows[0] as { id: string } | undefined)?.id || '';
 
   const sub = await getSubscription(resolvedSubId);

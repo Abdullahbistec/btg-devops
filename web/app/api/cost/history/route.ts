@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     const days = daysParam ? Math.max(1, parseInt(daysParam, 10) || 90) : 90;
     const db = await getDB();
 
-    const activeRes = await db.query("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1");
+    const activeRes = await db.query("SELECT id FROM subscriptions WHERE is_active = true ORDER BY created_at LIMIT 1");
     const resolvedSubId = subParam || (activeRes.rows[0] as { id: string } | undefined)?.id || '';
     const sub = await getSubscription(resolvedSubId);
     if (!sub) {
