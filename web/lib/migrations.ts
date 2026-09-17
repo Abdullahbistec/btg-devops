@@ -68,6 +68,51 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    // JSON-in-TEXT columns → jsonb (E-5): validation on write + queryability.
+    // Guarded per column (no-op if already jsonb); the USING maps an empty or
+    // whitespace value to '[]' so the cast can never abort on a stray blank row
+    // — every real value was written via JSON.stringify and is valid JSON.
+    // Writes keep passing JSON.stringify(...) (a JSON string binds to jsonb);
+    // reads now get parsed objects, so JSON.parse was removed at the read sites.
+    version: '0003_jsonb_columns',
+    up: async (c) => {
+      await c.query(`
+        DO $$
+        BEGIN
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='audits' AND column_name='commands_run')='text' THEN
+            ALTER TABLE audits ALTER COLUMN commands_run DROP DEFAULT;
+            ALTER TABLE audits ALTER COLUMN commands_run TYPE jsonb USING (CASE WHEN btrim(coalesce(commands_run,''))='' THEN '[]' ELSE commands_run END::jsonb);
+            ALTER TABLE audits ALTER COLUMN commands_run SET DEFAULT '[]'::jsonb;
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='cost_snapshots' AND column_name='by_service')='text' THEN
+            ALTER TABLE cost_snapshots ALTER COLUMN by_service DROP DEFAULT;
+            ALTER TABLE cost_snapshots ALTER COLUMN by_service TYPE jsonb USING (CASE WHEN btrim(coalesce(by_service,''))='' THEN '[]' ELSE by_service END::jsonb);
+            ALTER TABLE cost_snapshots ALTER COLUMN by_service SET DEFAULT '[]'::jsonb;
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='cost_snapshots' AND column_name='by_resource_group')='text' THEN
+            ALTER TABLE cost_snapshots ALTER COLUMN by_resource_group DROP DEFAULT;
+            ALTER TABLE cost_snapshots ALTER COLUMN by_resource_group TYPE jsonb USING (CASE WHEN btrim(coalesce(by_resource_group,''))='' THEN '[]' ELSE by_resource_group END::jsonb);
+            ALTER TABLE cost_snapshots ALTER COLUMN by_resource_group SET DEFAULT '[]'::jsonb;
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='cost_snapshot_history' AND column_name='by_service')='text' THEN
+            ALTER TABLE cost_snapshot_history ALTER COLUMN by_service TYPE jsonb USING (CASE WHEN btrim(coalesce(by_service,''))='' THEN '[]' ELSE by_service END::jsonb);
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='hetzner_cost_snapshots' AND column_name='by_category')='text' THEN
+            ALTER TABLE hetzner_cost_snapshots ALTER COLUMN by_category TYPE jsonb USING (CASE WHEN btrim(coalesce(by_category,''))='' THEN '{}' ELSE by_category END::jsonb);
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='hetzner_cost_snapshots' AND column_name='by_type')='text' THEN
+            ALTER TABLE hetzner_cost_snapshots ALTER COLUMN by_type TYPE jsonb USING (CASE WHEN btrim(coalesce(by_type,''))='' THEN '{}' ELSE by_type END::jsonb);
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='hetzner_cost_snapshots' AND column_name='unpriced')='text' THEN
+            ALTER TABLE hetzner_cost_snapshots ALTER COLUMN unpriced DROP DEFAULT;
+            ALTER TABLE hetzner_cost_snapshots ALTER COLUMN unpriced TYPE jsonb USING (CASE WHEN btrim(coalesce(unpriced,''))='' THEN '[]' ELSE unpriced END::jsonb);
+            ALTER TABLE hetzner_cost_snapshots ALTER COLUMN unpriced SET DEFAULT '[]'::jsonb;
+          END IF;
+        END $$;
+      `);
+    },
+  },
 ];
 
 /** Applies every migration not yet recorded in schema_migrations, in order,

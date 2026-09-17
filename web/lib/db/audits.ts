@@ -14,7 +14,7 @@ export interface Audit {
   critical_count: number;
   warning_count: number;
   info_count: number;
-  commands_run: string;
+  commands_run: string[];
   error_message: string;
   current_step?: string;
   total_steps?: number;

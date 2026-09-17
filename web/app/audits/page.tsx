@@ -17,7 +17,7 @@ interface Audit {
   current_step?: string;
   total_steps?: number;
   completed_steps?: number;
-  commands_run?: string;
+  commands_run?: string[];
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -76,7 +76,7 @@ function AuditProgressBar({ audit }: { audit: Audit | null }) {
   // time), not a hardcoded superset — so an Azure-only or PP-only scan only shows
   // its own steps.
   let plannedCommands: string[] = [];
-  try { plannedCommands = JSON.parse(audit?.commands_run || '[]'); } catch { /* ignore */ }
+  try { plannedCommands = audit?.commands_run ?? []; } catch { /* ignore */ }
   const runSteps = plannedCommands
     .map(key => AUDIT_STEPS.find(s => s.key === key))
     .filter((s): s is typeof AUDIT_STEPS[number] => !!s);

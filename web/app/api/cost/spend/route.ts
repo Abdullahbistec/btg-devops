@@ -40,8 +40,8 @@ export async function GET(req: NextRequest) {
       timeframe: 'MonthToDate',
       totalCost: snapshot.total_cost,
       currency: snapshot.currency,
-      byService: JSON.parse(snapshot.by_service),
-      byResourceGroup: JSON.parse(snapshot.by_resource_group),
+      byService: snapshot.by_service,
+      byResourceGroup: snapshot.by_resource_group,
       fetchedAt: snapshot.fetched_at,
       monthlyBudget: sub.monthly_budget,
     });

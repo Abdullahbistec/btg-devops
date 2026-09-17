@@ -21,9 +21,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       totalMonthly: snap.total_monthly,
       currency: snap.currency,
-      byCategory: JSON.parse(snap.by_category),
-      byType: JSON.parse(snap.by_type),
-      unpriced: snap.unpriced ? JSON.parse(snap.unpriced) : [],
+      byCategory: snap.by_category,
+      byType: snap.by_type,
+      unpriced: snap.unpriced ?? [],
       fetchedAt: snap.fetched_at,
       estimate: true,
     });

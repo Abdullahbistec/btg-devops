@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
       points: rows.map(r => ({
         date: r.snapshot_date,
         totalCost: r.total_cost,
-        byService: JSON.parse(r.by_service),
+        byService: r.by_service,
       })),
     });
   } catch (e) {

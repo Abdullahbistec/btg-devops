@@ -215,7 +215,7 @@ describe('saveCostSnapshot — history', () => {
     expect(history).toHaveLength(1);
     expect(Number(history[0].total_cost)).toBe(100);
     expect(history[0].currency).toBe('USD');
-    expect(JSON.parse(history[0].by_service)).toEqual([{ name: 'Virtual Machines', cost: 60 }, { name: 'Storage', cost: 40 }]);
+    expect(history[0].by_service).toEqual([{ name: 'Virtual Machines', cost: 60 }, { name: 'Storage', cost: 40 }]);
     expect(history[0].snapshot_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
@@ -517,7 +517,7 @@ describe('hetzner cost snapshots', () => {
     const snap = await getHetznerCostSnapshot();
     expect(snap?.total_monthly).toBeCloseTo(246.89, 2);
     expect(snap?.currency).toBe('USD');
-    expect(JSON.parse(snap!.by_category).servers).toBeCloseTo(213.35, 2);
+    expect(snap!.by_category.servers).toBeCloseTo(213.35, 2);
   });
 
   it('round-trips a non-empty unpriced list so a pricing gap stays visible', async () => {
@@ -533,7 +533,7 @@ describe('hetzner cost snapshots', () => {
     });
 
     const snap = await getHetznerCostSnapshot();
-    const unpriced = JSON.parse(snap!.unpriced);
+    const unpriced = snap!.unpriced;
     expect(unpriced).toEqual(['server web-1 (type unknown-type)', 'primary ip pip-1 (type ipv4)']);
   });
 
@@ -547,6 +547,6 @@ describe('hetzner cost snapshots', () => {
     });
 
     const snap = await getHetznerCostSnapshot();
-    expect(JSON.parse(snap!.unpriced)).toEqual([]);
+    expect(snap!.unpriced).toEqual([]);
   });
 });

@@ -7,8 +7,8 @@ export interface CostSnapshot {
   subscription_id: string;
   total_cost: number;
   currency: string;
-  by_service: string;        // JSON-encoded { name, cost }[]
-  by_resource_group: string; // JSON-encoded { name, cost }[]
+  by_service: { name: string; cost: number }[];        // JSON-encoded { name, cost }[]
+  by_resource_group: { name: string; cost: number }[]; // JSON-encoded { name, cost }[]
   fetched_at: string;
 }
 
@@ -52,9 +52,9 @@ export interface HetznerCostSnapshot {
   id: string;
   total_monthly: number;
   currency: string;
-  by_category: string; // JSON-encoded { [category]: number }
-  by_type: string;      // JSON-encoded { [serverType]: { count, monthly_total } }
-  unpriced: string;     // JSON-encoded string[] — resources whose price lookup failed
+  by_category: Record<string, number>; // JSON-encoded { [category]: number }
+  by_type: Record<string, { count: number; monthly_total: number }>;      // JSON-encoded { [serverType]: { count, monthly_total } }
+  unpriced: string[];     // JSON-encoded string[] — resources whose price lookup failed
   fetched_at: string;
 }
 
@@ -173,7 +173,7 @@ export interface CostSnapshotHistoryRow {
   snapshot_date: string;
   total_cost: number;
   currency: string;
-  by_service: string; // JSON-encoded { name, cost }[]
+  by_service: { name: string; cost: number }[]; // JSON-encoded { name, cost }[]
   fetched_at: string;
 }
 

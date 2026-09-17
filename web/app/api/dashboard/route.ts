@@ -34,14 +34,14 @@ export async function GET(req: NextRequest) {
       const recentRes = await db.query(
         `SELECT id, commands_run FROM audits WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 25`
       );
-      const recent = recentRes.rows as { id: string; commands_run: string }[];
+      const recent = recentRes.rows as { id: string; commands_run: string[] }[];
       const wanted = scope === 'pp' ? PP_COMMANDS : scope === 'azure' ? AZURE_COMMANDS : scope === 'hetzner' ? HETZNER_COMMANDS : null;
       if (!wanted) {
         resolvedAuditId = recent[0]?.id;
       } else {
         for (const audit of recent) {
           let commands: string[] = [];
-          try { commands = JSON.parse(audit.commands_run); } catch { /* ignore */ }
+          try { commands = audit.commands_run ?? []; } catch { /* ignore */ }
           if (commands.some(c => (wanted as readonly string[]).includes(c))) { resolvedAuditId = audit.id; break; }
         }
       }
