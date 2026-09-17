@@ -15,3 +15,15 @@ services:
       - "3000:3000"
     env_file:
       - web/.env.local
+    environment:
+      # Overrides web/.env.local's CLAUDE_DRAIN_ENABLED=1 for this container
+      # specifically. The image has no `claude` CLI and no credentials, so
+      # leaving the flag on would mean every Summarize click spawns a
+      # process that can't exist (ENOENT), caught by the existing try/catch
+      # in routine-trigger.ts, and the request just sits pending forever
+      # with nothing on screen explaining why. Disabled beats silently
+      # broken. See docs/docker-claude-drain.md for what real support would
+      # require (installing the CLI, plus mounting a Claude account's
+      # credentials into a server container — a decision for whoever owns
+      # that account, not a default).
+      - CLAUDE_DRAIN_ENABLED=0
