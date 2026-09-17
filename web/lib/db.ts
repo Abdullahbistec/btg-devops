@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { randomUUID } from 'crypto';
 import { encryptSecret } from './crypto';
+import { runMigrations } from './migrations';
 
 let _pool: Pool | null = null;
 let _ready: Promise<void> | null = null;
@@ -32,12 +33,17 @@ export async function getDB(): Promise<Pool> {
     // schema fails — otherwise one transient failure (the app booting before
     // Postgres accepts connections) poisons every later getDB() call for the
     // lifetime of the process. Resetting lets the next caller retry.
-    _ready = initSchema(pool).catch((err) => {
-      _pool = null;
-      _ready = null;
-      void pool.end().catch(() => {});
-      throw err;
-    });
+    // Baseline schema first (idempotent), then versioned migrations for
+    // changes a re-runnable baseline can't express (see lib/migrations.ts).
+    _ready = initSchema(pool)
+      .then(() => runMigrations(pool))
+      .then(() => undefined)
+      .catch((err) => {
+        _pool = null;
+        _ready = null;
+        void pool.end().catch(() => {});
+        throw err;
+      });
   }
   const pool = _pool;
   await _ready;
@@ -266,6 +272,9 @@ async function initSchema(pool: Pool): Promise<void> {
   // Postgres supports IF NOT EXISTS natively, so nothing is swallowed here.
   // Any column added to an existing table from now on belongs in BOTH the
   // DDL above (for fresh databases) and this list (for existing ones).
+  // Anything a re-runnable baseline CANNOT express — a column type change,
+  // a data backfill, a rename or drop — goes in lib/migrations.ts as an
+  // ordered, once-applied migration instead, not here.
   await pool.query(`
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS remediation_status TEXT DEFAULT 'open';
     ALTER TABLE findings ADD COLUMN IF NOT EXISTS owner              TEXT DEFAULT '';
