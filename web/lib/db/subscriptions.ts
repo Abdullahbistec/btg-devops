@@ -10,7 +10,7 @@ export interface Subscription {
   subscription_id: string;
   tenant_id: string;
   client_id: string;
-  is_active: number;
+  is_active: boolean;
   created_at: string;
   last_audit_at: string | null;
   monthly_budget: number | null;
@@ -27,7 +27,7 @@ export async function listSubscriptions(): Promise<Subscription[]> {
 
 /** Minimal, non-sensitive subscription list (id/name/active only) — safe for
  * viewer-level read access, unlike listSubscriptions() which is admin-only. */
-export async function listSubscriptionsBasic(): Promise<{ id: string; name: string; is_active: number }[]> {
+export async function listSubscriptionsBasic(): Promise<{ id: string; name: string; is_active: boolean }[]> {
   const db = await getDB();
   const { rows } = await db.query(`SELECT id, name, is_active FROM subscriptions ORDER BY created_at DESC`);
   return rows;

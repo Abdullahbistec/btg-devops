@@ -13,7 +13,7 @@ interface AuditSummary {
 }
 
 interface CompareEntry {
-  subscription: { id: string; name: string; is_active: number };
+  subscription: { id: string; name: string; is_active: boolean };
   latestAudit: AuditSummary | null;
   byService: { service: string; count: number }[];
 }

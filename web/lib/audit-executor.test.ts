@@ -70,7 +70,7 @@ describe('executeAudit — command failures are not silently successful', () => 
     await db.query('DELETE FROM subscriptions');
     await db.query(
       `INSERT INTO subscriptions (id, name, subscription_id, tenant_id, client_id, client_secret, is_active)
-       VALUES ($1, 'Test Sub', 'azure-sub', 'tenant', 'client', 'secret', 1)`,
+       VALUES ($1, 'Test Sub', 'azure-sub', 'tenant', 'client', 'secret', true)`,
       [SUB]
     );
   });
@@ -149,7 +149,7 @@ describe('executeAudit — credential guards', () => {
     await db.query('DELETE FROM subscriptions');
     await db.query(
       `INSERT INTO subscriptions (id, name, subscription_id, tenant_id, client_id, client_secret, is_active)
-       VALUES ($1, 'Test Sub', 'azure-sub', 'tenant', 'client', 'secret', 1)`,
+       VALUES ($1, 'Test Sub', 'azure-sub', 'tenant', 'client', 'secret', true)`,
       [SUB]
     );
   });
