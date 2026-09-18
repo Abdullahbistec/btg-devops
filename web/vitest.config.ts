@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { defineConfig } from 'vitest/config';
+import { defineConfig, configDefaults } from 'vitest/config';
 
 /** Derives a connection string for the dedicated btg_devops_test database
  * from whatever DATABASE_URL is configured in .env.local — same host,
@@ -26,6 +26,9 @@ export default defineConfig({
     alias: { '@': path.resolve(__dirname, '.') },
   },
   test: {
+    // e2e/ holds Playwright specs (browser E2E), run via `npx playwright test`,
+    // not vitest — they import @playwright/test and must not be picked up here.
+    exclude: [...configDefaults.exclude, 'e2e/**'],
     env: {
       DATABASE_URL: testDatabaseUrl(),
     },
