@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     const next_run = computeNextRun(frequency ?? 'daily', Number(hour ?? 2), new Date(), timesPerDay);
     await db.query(
       `INSERT INTO schedules (id, name, frequency, hour, times_per_day, enabled, next_run_at, subscription_id)
-       VALUES ($1, $2, $3, $4, $5, 1, $6, $7)`,
+       VALUES ($1, $2, $3, $4, $5, true, $6, $7)`,
       [id, name || 'Scheduled Audit', frequency || 'daily', Number(hour ?? 2), timesPerDay, next_run, subscription_id || null]
     );
     await recordAuditLog(req, 'schedule.create', { id, name, frequency, hour, times_per_day: timesPerDay });
@@ -49,8 +49,8 @@ export async function PATCH(req: NextRequest) {
     if (!parsed.ok) return parsed.response;
     const { id, enabled } = parsed.data;
     const db = await getDB();
-    await db.query('UPDATE schedules SET enabled = $1 WHERE id = $2', [enabled ? 1 : 0, id]);
-    await recordAuditLog(req, 'schedule.toggle', { id, enabled: enabled ? 1 : 0 });
+    await db.query('UPDATE schedules SET enabled = $1 WHERE id = $2', [Boolean(enabled), id]);
+    await recordAuditLog(req, 'schedule.toggle', { id, enabled: Boolean(enabled) });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return apiError(e, 'PATCH /api/schedule');

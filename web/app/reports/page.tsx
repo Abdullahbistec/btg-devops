@@ -34,7 +34,7 @@ interface Audit {
   critical_count: number;
   warning_count: number;
   info_count: number;
-  commands_run: string;
+  commands_run: string[];
 }
 
 interface Finding {
@@ -106,7 +106,7 @@ export default function ReportsPage() {
   }, [selected]);
 
   const audit = audits.find(a => a.id === selected);
-  const commands: string[] = audit ? (() => { try { return JSON.parse(audit.commands_run); } catch { return []; } })() : [];
+  const commands: string[] = audit ? (() => { return audit.commands_run ?? [] })() : [];
 
   const filtered = filter === 'all' ? findings : findings.filter(f => f.severity === filter);
 

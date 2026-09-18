@@ -17,7 +17,7 @@ interface Audit {
   current_step?: string;
   total_steps?: number;
   completed_steps?: number;
-  commands_run?: string;
+  commands_run?: string[];
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -76,7 +76,7 @@ function AuditProgressBar({ audit }: { audit: Audit | null }) {
   // time), not a hardcoded superset — so an Azure-only or PP-only scan only shows
   // its own steps.
   let plannedCommands: string[] = [];
-  try { plannedCommands = JSON.parse(audit?.commands_run || '[]'); } catch { /* ignore */ }
+  try { plannedCommands = audit?.commands_run ?? []; } catch { /* ignore */ }
   const runSteps = plannedCommands
     .map(key => AUDIT_STEPS.find(s => s.key === key))
     .filter((s): s is typeof AUDIT_STEPS[number] => !!s);
@@ -208,7 +208,7 @@ export default function AuditsPage() {
   const [pollingId, setPollingId] = useState<string | null>(null);
   const [polledAudit, setPolledAudit] = useState<Audit | null>(null);
   const [isAdmin, setIsAdmin] = useState(true);
-  const [subscriptions, setSubscriptions] = useState<{ id: string; name: string; is_active: number }[]>([]);
+  const [subscriptions, setSubscriptions] = useState<{ id: string; name: string; is_active: boolean }[]>([]);
   const [selectedSub, setSelectedSub] = useState<string>('');
 
   useEffect(() => {
@@ -222,7 +222,7 @@ export default function AuditsPage() {
     fetch('/api/subscriptions').then(r => r.ok ? r.json() : []).then(list => {
       const subs = Array.isArray(list) ? list : [];
       setSubscriptions(subs);
-      const active = subs.find((s: { is_active: number }) => s.is_active) ?? subs[0];
+      const active = subs.find((s: { is_active: boolean }) => s.is_active) ?? subs[0];
       if (active) setSelectedSub(active.id);
     });
   }, [isAdmin]);

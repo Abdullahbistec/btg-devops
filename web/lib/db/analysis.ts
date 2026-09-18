@@ -36,7 +36,7 @@ export async function listPendingAnalysisRequests(): Promise<AnalysisRequest[]> 
 export async function completeAnalysisRequest(id: string, summary: string): Promise<void> {
   const db = await getDB();
   await db.query(
-    `UPDATE analysis_requests SET status = 'done', summary = $1, completed_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS') WHERE id = $2`,
+    `UPDATE analysis_requests SET status = 'done', summary = $1, completed_at = now() WHERE id = $2`,
     [summary, id]
   );
 }
@@ -44,7 +44,7 @@ export async function completeAnalysisRequest(id: string, summary: string): Prom
 export async function failAnalysisRequest(id: string, message: string): Promise<void> {
   const db = await getDB();
   await db.query(
-    `UPDATE analysis_requests SET status = 'failed', error_message = $1, completed_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS') WHERE id = $2`,
+    `UPDATE analysis_requests SET status = 'failed', error_message = $1, completed_at = now() WHERE id = $2`,
     [message, id]
   );
 }

@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import KPICard from '@/components/KPICard';
+import { useEscapeToClose } from '@/hooks/useEscapeToClose';
 import {
   ResponsiveContainer, AreaChart, Area, Line, LabelList, XAxis, YAxis, Tooltip,
   BarChart, Bar, Cell, PieChart, Pie,
@@ -17,7 +18,7 @@ interface DashData {
   byCategory: { category: string; count: number }[];
   trend: { id: string; name: string; started_at: string; total_findings: number; critical_count: number; warning_count: number; info_count: number; prev_total_findings: number | null }[];
   trendChangePct: number | null;
-  subscriptions: { id: string; name: string; is_active: number }[];
+  subscriptions: { id: string; name: string; is_active: boolean }[];
   recentAudits: { id: string; name: string; status: string; started_at: string; total_findings: number; critical_count: number; warning_count: number }[];
   resolvedAuditId: string;
   ppReady: boolean;
@@ -462,6 +463,7 @@ type AuditRow = { id: string; name: string; status: string; started_at: string; 
 
 function RecentAuditsList({ audits }: { audits: AuditRow[] }) {
   const [open, setOpen] = useState(false);
+  useEscapeToClose(open, () => setOpen(false));
   const SHOW = 3;
 
   if (audits.length === 0) return <EmptyState />;
@@ -977,6 +979,7 @@ function FindingsCard({ findings, svcTabs, label }: { findings: Finding[]; svcTa
   const [remTab,  setRemTab]  = useState<string>('all');
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<Finding | null>(null);
+  useEscapeToClose(!!detail, () => setDetail(null));
 
   function switchSev(t: SevTab)  { setSevTab(t);  setExpanded(false); }
   function switchSvc(k: string)  { setSvcKey(k);  setExpanded(false); }
