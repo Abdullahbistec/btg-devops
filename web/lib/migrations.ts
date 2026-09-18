@@ -113,6 +113,46 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    // TEXT UTC-string timestamps → timestamptz (E-3). Runs with the session in
+    // UTC (pool options in db/core.ts), so a naive 'YYYY-MM-DD HH24:MI:SS'
+    // string casts to the correct UTC instant. The type parser in db/core.ts
+    // formats them back to the same UTC string on read, so consumers are
+    // unchanged; storage is now a real instant, enabling SQL date math/indexes.
+    // snapshot_date is intentionally excluded — it is a calendar date
+    // ('YYYY-MM-DD'), not a timestamp. Guarded per column via data_type, so a
+    // no-op if already converted.
+    version: '0004_timestamptz',
+    up: async (c) => {
+      await c.query(`
+        DO $$
+        DECLARE r record;
+        BEGIN
+          FOR r IN
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND data_type = 'text'
+              AND column_name IN ('created_at','started_at','completed_at','fetched_at',
+                                  'requested_at','last_run_at','next_run_at','last_audit_at','approved_at')
+          LOOP
+            EXECUTE format('ALTER TABLE %I ALTER COLUMN %I DROP DEFAULT', r.table_name, r.column_name);
+            EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE timestamptz USING nullif(btrim(%I), %L)::timestamptz',
+                           r.table_name, r.column_name, r.column_name, '');
+          END LOOP;
+        END $$;
+      `);
+      // Restore now() defaults on the columns that carried a to_char(now())
+      // default before the type change (no-op-safe if already set).
+      await c.query(`ALTER TABLE subscriptions       ALTER COLUMN created_at   SET DEFAULT now();`);
+      await c.query(`ALTER TABLE findings            ALTER COLUMN created_at   SET DEFAULT now();`);
+      await c.query(`ALTER TABLE schedules           ALTER COLUMN created_at   SET DEFAULT now();`);
+      await c.query(`ALTER TABLE users               ALTER COLUMN created_at   SET DEFAULT now();`);
+      await c.query(`ALTER TABLE analysis_requests   ALTER COLUMN requested_at SET DEFAULT now();`);
+      await c.query(`ALTER TABLE cost_snapshots      ALTER COLUMN fetched_at   SET DEFAULT now();`);
+      await c.query(`ALTER TABLE cost_fetch_requests ALTER COLUMN requested_at SET DEFAULT now();`);
+    },
+  },
 ];
 
 /** Applies every migration not yet recorded in schema_migrations, in order,

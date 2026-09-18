@@ -1,8 +1,24 @@
 import { getDB, hasCostSnapshotHistoryRow, hasBackfillRequestToday, createCostBackfillRequest, completeCostFetchRequest, failCostFetchRequest, getStaleRunningAudits, failAudit, getHetznerCostSnapshot, saveHetznerCostSnapshot, hasMeasuredHetznerSnapshotToday, hasRunningAudit } from '@/lib/db';
-import { executeAudit } from '@/lib/audit-executor';
+// NOT a static top-level import, deliberately. instrumentation.ts reaches
+// this file via a dynamic import, but scheduler.ts's own module graph still
+// gets eagerly resolved for Next's Edge-runtime bundle of instrumentation.ts
+// -- and audit-executor.ts statically imports btg-runner.ts, which imports
+// 'child_process'. A static import here broke ALL /api/internal/* routes
+// with "Module not found: Can't resolve 'child_process'", because Next's
+// dev server treats a failed instrumentation compile as fatal to the whole
+// build, not just to the Edge bundle that never actually executes this code
+// (see the same root cause fixed in web/lib/mcp-runner.ts, which avoids the
+// import entirely). Importing it lazily, inside the one function that
+// actually calls it, keeps it out of the eagerly-analyzed static graph.
+type AuditExecutor = typeof import('@/lib/audit-executor');
+let auditExecutor: AuditExecutor | null = null;
+async function getAuditExecutor(): Promise<AuditExecutor> {
+  if (!auditExecutor) auditExecutor = await import('@/lib/audit-executor');
+  return auditExecutor;
+}
 import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
 import { runHetznerCostReport } from '@/lib/btg-runner';
-import { computeNextRun, toUtcTimestamp, NOW_UTC_SQL } from '@/lib/schedule-time';
+import { computeNextRun, toUtcTimestamp } from '@/lib/schedule-time';
 import { createSingleFlightRunner } from '@/lib/single-flight';
 
 const POLL_INTERVAL_MS = 60_000;
@@ -34,7 +50,7 @@ async function runDueSchedules() {
   try {
     const { rows } = await db.query(
       `SELECT id, name, frequency, hour, times_per_day, enabled, subscription_id FROM schedules
-       WHERE enabled = true AND next_run_at IS NOT NULL AND next_run_at <= ${NOW_UTC_SQL}`
+       WHERE enabled = true AND next_run_at IS NOT NULL AND next_run_at <= now()`
     );
     due = rows;
   } catch (e) {
@@ -45,12 +61,13 @@ async function runDueSchedules() {
   for (const sched of due) {
     console.log(`[scheduler] running due schedule '${sched.name}' (${sched.id})`);
     try {
+      const { executeAudit } = await getAuditExecutor();
       await executeAudit(sched.subscription_id || '', undefined, `${sched.name} — ${toUtcTimestamp(new Date())}`);
     } catch (e) {
       console.error(`[scheduler] schedule '${sched.name}' failed to start:`, e);
     }
     const nextRun = computeNextRun(sched.frequency, sched.hour, new Date(), sched.times_per_day || 1);
-    await db.query(`UPDATE schedules SET last_run_at = ${NOW_UTC_SQL}, next_run_at = $1 WHERE id = $2`, [nextRun, sched.id]);
+    await db.query(`UPDATE schedules SET last_run_at = now(), next_run_at = $1 WHERE id = $2`, [nextRun, sched.id]);
   }
 }
 

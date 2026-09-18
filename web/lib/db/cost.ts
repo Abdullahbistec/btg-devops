@@ -22,7 +22,7 @@ export async function saveCostSnapshot(subscriptionId: string, data: { totalCost
   const db = await getDB();
   await db.query(
     `INSERT INTO cost_snapshots (subscription_id, total_cost, currency, by_service, by_resource_group, fetched_at)
-     VALUES ($1, $2, $3, $4, $5, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
+     VALUES ($1, $2, $3, $4, $5, now())
      ON CONFLICT (subscription_id) DO UPDATE SET
        total_cost = excluded.total_cost,
        currency = excluded.currency,
@@ -35,7 +35,7 @@ export async function saveCostSnapshot(subscriptionId: string, data: { totalCost
   try {
     await db.query(
       `INSERT INTO cost_snapshot_history (subscription_id, snapshot_date, total_cost, currency, by_service, fetched_at)
-       VALUES ($1, to_char(now(), 'YYYY-MM-DD'), $2, $3, $4, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
+       VALUES ($1, to_char(now(), 'YYYY-MM-DD'), $2, $3, $4, now())
        ON CONFLICT (subscription_id, snapshot_date) DO UPDATE SET
          total_cost = excluded.total_cost,
          currency = excluded.currency,
@@ -198,7 +198,7 @@ export async function saveCostSnapshotHistoryRow(subscriptionId: string, snapsho
   const db = await getDB();
   await db.query(
     `INSERT INTO cost_snapshot_history (subscription_id, snapshot_date, total_cost, currency, by_service, fetched_at)
-     VALUES ($1, $2, $3, $4, $5, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
+     VALUES ($1, $2, $3, $4, $5, now())
      ON CONFLICT (subscription_id, snapshot_date) DO UPDATE SET
        total_cost = excluded.total_cost,
        currency = excluded.currency,
@@ -287,7 +287,7 @@ export async function hasBackfillRequestToday(subscriptionId: string): Promise<b
   const { rows } = await db.query(
     `SELECT 1 FROM cost_fetch_requests
      WHERE subscription_id = $1 AND type = 'backfill'
-       AND requested_at >= to_char(now(), 'YYYY-MM-DD')
+       AND requested_at >= date_trunc('day', now())
      LIMIT 1`,
     [subscriptionId]
   );
@@ -309,18 +309,18 @@ export async function completeCostFetchRequest(id: string, note?: string): Promi
   const db = await getDB();
   if (note) {
     await db.query(
-      `UPDATE cost_fetch_requests SET status = 'done', completed_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS'), error_message = $1 WHERE id = $2`,
+      `UPDATE cost_fetch_requests SET status = 'done', completed_at = now(), error_message = $1 WHERE id = $2`,
       [note, id]
     );
   } else {
-    await db.query(`UPDATE cost_fetch_requests SET status = 'done', completed_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS') WHERE id = $1`, [id]);
+    await db.query(`UPDATE cost_fetch_requests SET status = 'done', completed_at = now() WHERE id = $1`, [id]);
   }
 }
 
 export async function failCostFetchRequest(id: string, message: string): Promise<void> {
   const db = await getDB();
   await db.query(
-    `UPDATE cost_fetch_requests SET status = 'failed', error_message = $1, completed_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS') WHERE id = $2`,
+    `UPDATE cost_fetch_requests SET status = 'failed', error_message = $1, completed_at = now() WHERE id = $2`,
     [message, id]
   );
 }

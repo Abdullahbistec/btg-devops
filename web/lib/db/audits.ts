@@ -42,7 +42,7 @@ export async function createAudit(subscriptionId: string, name: string, plannedC
   const id = randomUUID();
   await db.query(
     `INSERT INTO audits (id, subscription_id, name, status, started_at, total_steps, commands_run)
-     VALUES ($1, $2, $3, 'running', to_char(now(), 'YYYY-MM-DD HH24:MI:SS'), $4, $5)`,
+     VALUES ($1, $2, $3, 'running', now(), $4, $5)`,
     [id, subscriptionId, name, plannedCommands.length, JSON.stringify(plannedCommands)]
   );
   return (await getAudit(id))!;
@@ -71,21 +71,21 @@ export async function updateAuditCounts(id: string, critical: number, warning: n
        resources_scanned = $6,
        status = 'completed',
        error_message = $7,
-       completed_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+       completed_at = now()
      WHERE id = $8`,
     [critical + warning + info, critical, warning, info, JSON.stringify(commands), resourcesScanned, note ?? '', id]
   );
 
   const audit = await getAudit(id);
   if (audit) {
-    await db.query(`UPDATE subscriptions SET last_audit_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS') WHERE id = $1`, [audit.subscription_id]);
+    await db.query(`UPDATE subscriptions SET last_audit_at = now() WHERE id = $1`, [audit.subscription_id]);
   }
 }
 
 export async function failAudit(id: string, message: string): Promise<void> {
   const db = await getDB();
   await db.query(
-    `UPDATE audits SET status = 'failed', error_message = $1, completed_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS') WHERE id = $2`,
+    `UPDATE audits SET status = 'failed', error_message = $1, completed_at = now() WHERE id = $2`,
     [message, id]
   );
 }
@@ -100,7 +100,7 @@ export async function getStaleRunningAudits(maxAgeHours: number): Promise<{ id: 
   const db = await getDB();
   const { rows } = await db.query(
     `SELECT id, name FROM audits
-     WHERE status = 'running' AND started_at <= to_char(now() - ($1 || ' hours')::interval, 'YYYY-MM-DD HH24:MI:SS')`,
+     WHERE status = 'running' AND started_at <= now() - ($1 || ' hours')::interval`,
     [maxAgeHours]
   );
   return rows;
