@@ -15,21 +15,32 @@ export function schedulerEnabled(): boolean {
 }
 
 export async function register() {
-  // Only run in the Node.js server process — this hook also fires for the Edge
-  // runtime (middleware), which can't run the scheduler (needs node:sqlite,
-  // child_process, etc.).
-  if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+  // Next.js also builds an Edge-runtime bundle of this file (middleware.ts
+  // runs on Edge, and register() is invoked once per runtime the app
+  // instantiates). Everything below imports node:child_process/path/crypto
+  // transitively (scheduler -> db/btg-runner, mcp-runner -> child_process),
+  // none of which exist on Edge.
+  //
+  // This exact shape -- `if (process.env.NEXT_RUNTIME === 'nodejs') { ... }`
+  // as ONE block, not an early return -- is the pattern Next's build tooling
+  // recognizes to exclude the block's imports from the Edge bundle entirely.
+  // An early-return guard (`if (x !== 'nodejs') return;`) does NOT match that
+  // pattern: the dynamic imports after it still get statically resolved for
+  // the Edge target and the build fails with "Can't resolve 'child_process'"
+  // (etc.), even though that code never actually runs there. Keep this as a
+  // single literal `if (process.env.NEXT_RUNTIME === 'nodejs') { ... }` block.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    if (schedulerEnabled()) {
+      const { startScheduler } = await import('@/lib/scheduler');
+      startScheduler();
+    }
 
-  if (schedulerEnabled()) {
-    const { startScheduler } = await import('@/lib/scheduler');
-    startScheduler();
+    // Unlike the scheduler, this isn't gated on production vs dev — it's an
+    // idle listener until something calls it, and gating it the same way
+    // would mean a second manual terminal is still needed in dev, which is
+    // exactly what this exists to remove. See web/lib/mcp-runner.ts for the
+    // real gate (both MCP tokens must be configured).
+    const { startMcpServer } = await import('@/lib/mcp-runner');
+    await startMcpServer();
   }
-
-  // Unlike the scheduler, this isn't gated on production vs dev — it's an
-  // idle listener until something calls it, and gating it the same way
-  // would mean a second manual terminal is still needed in dev, which is
-  // exactly what this exists to remove. See web/lib/mcp-runner.ts for the
-  // real gate (both MCP tokens must be configured).
-  const { startMcpServer } = await import('@/lib/mcp-runner');
-  await startMcpServer();
 }

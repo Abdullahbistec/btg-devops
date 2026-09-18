@@ -16,8 +16,17 @@ async function getAuditExecutor(): Promise<AuditExecutor> {
   if (!auditExecutor) auditExecutor = await import('@/lib/audit-executor');
   return auditExecutor;
 }
+
+// Same hazard, same fix: btg-runner.ts also imports 'child_process' directly
+// (for the `analyze` subprocess calls), so it gets the same lazy treatment
+// as audit-executor.ts above rather than a static top-level import.
+type BtgRunner = typeof import('@/lib/btg-runner');
+let btgRunner: BtgRunner | null = null;
+async function getBtgRunner(): Promise<BtgRunner> {
+  if (!btgRunner) btgRunner = await import('@/lib/btg-runner');
+  return btgRunner;
+}
 import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
-import { runHetznerCostReport } from '@/lib/btg-runner';
 import { computeNextRun, toUtcTimestamp } from '@/lib/schedule-time';
 import { createSingleFlightRunner } from '@/lib/single-flight';
 
@@ -140,6 +149,7 @@ async function runDailyHetznerCostRefresh() {
     if (await hasMeasuredHetznerSnapshotToday()) return;
 
     console.log('[scheduler] running daily Hetzner cost refresh');
+    const { runHetznerCostReport } = await getBtgRunner();
     const report = await runHetznerCostReport();
     await saveHetznerCostSnapshot({
       totalMonthly: report.totalMonthly,
