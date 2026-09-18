@@ -14,14 +14,14 @@ async function resolveLatestAuditForScope(scope: string): Promise<string | undef
   const { rows } = await db.query(
     `SELECT id, commands_run FROM audits WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 25`
   );
-  const recent = rows as { id: string; commands_run: string }[];
+  const recent = rows as { id: string; commands_run: string[] }[];
 
   const wanted = scope === 'pp' ? PP_COMMANDS : scope === 'azure' ? AZURE_COMMANDS : scope === 'hetzner' ? HETZNER_COMMANDS : null;
   if (!wanted) return recent[0]?.id;
 
   for (const audit of recent) {
     let commands: string[] = [];
-    try { commands = JSON.parse(audit.commands_run); } catch { /* ignore */ }
+    try { commands = audit.commands_run ?? []; } catch { /* ignore */ }
     if (commands.some(c => (wanted as readonly string[]).includes(c))) return audit.id;
   }
   return undefined;

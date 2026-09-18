@@ -1,8 +1,33 @@
 import { getDB, hasCostSnapshotHistoryRow, hasBackfillRequestToday, createCostBackfillRequest, completeCostFetchRequest, failCostFetchRequest, getStaleRunningAudits, failAudit, getHetznerCostSnapshot, saveHetznerCostSnapshot, hasMeasuredHetznerSnapshotToday, hasRunningAudit } from '@/lib/db';
-import { executeAudit } from '@/lib/audit-executor';
+// NOT a static top-level import, deliberately. instrumentation.ts reaches
+// this file via a dynamic import, but scheduler.ts's own module graph still
+// gets eagerly resolved for Next's Edge-runtime bundle of instrumentation.ts
+// -- and audit-executor.ts statically imports btg-runner.ts, which imports
+// 'child_process'. A static import here broke ALL /api/internal/* routes
+// with "Module not found: Can't resolve 'child_process'", because Next's
+// dev server treats a failed instrumentation compile as fatal to the whole
+// build, not just to the Edge bundle that never actually executes this code
+// (see the same root cause fixed in web/lib/mcp-runner.ts, which avoids the
+// import entirely). Importing it lazily, inside the one function that
+// actually calls it, keeps it out of the eagerly-analyzed static graph.
+type AuditExecutor = typeof import('@/lib/audit-executor');
+let auditExecutor: AuditExecutor | null = null;
+async function getAuditExecutor(): Promise<AuditExecutor> {
+  if (!auditExecutor) auditExecutor = await import('@/lib/audit-executor');
+  return auditExecutor;
+}
+
+// Same hazard, same fix: btg-runner.ts also imports 'child_process' directly
+// (for the `analyze` subprocess calls), so it gets the same lazy treatment
+// as audit-executor.ts above rather than a static top-level import.
+type BtgRunner = typeof import('@/lib/btg-runner');
+let btgRunner: BtgRunner | null = null;
+async function getBtgRunner(): Promise<BtgRunner> {
+  if (!btgRunner) btgRunner = await import('@/lib/btg-runner');
+  return btgRunner;
+}
 import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
-import { runHetznerCostReport } from '@/lib/btg-runner';
-import { computeNextRun, toUtcTimestamp, NOW_UTC_SQL } from '@/lib/schedule-time';
+import { computeNextRun, toUtcTimestamp } from '@/lib/schedule-time';
 import { createSingleFlightRunner } from '@/lib/single-flight';
 
 const POLL_INTERVAL_MS = 60_000;
@@ -24,7 +49,7 @@ interface ScheduleRow {
   frequency: string;
   hour: number;
   times_per_day: number;
-  enabled: number;
+  enabled: boolean;
   subscription_id: string | null;
 }
 
@@ -34,7 +59,7 @@ async function runDueSchedules() {
   try {
     const { rows } = await db.query(
       `SELECT id, name, frequency, hour, times_per_day, enabled, subscription_id FROM schedules
-       WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ${NOW_UTC_SQL}`
+       WHERE enabled = true AND next_run_at IS NOT NULL AND next_run_at <= now()`
     );
     due = rows;
   } catch (e) {
@@ -45,12 +70,13 @@ async function runDueSchedules() {
   for (const sched of due) {
     console.log(`[scheduler] running due schedule '${sched.name}' (${sched.id})`);
     try {
+      const { executeAudit } = await getAuditExecutor();
       await executeAudit(sched.subscription_id || '', undefined, `${sched.name} — ${toUtcTimestamp(new Date())}`);
     } catch (e) {
       console.error(`[scheduler] schedule '${sched.name}' failed to start:`, e);
     }
     const nextRun = computeNextRun(sched.frequency, sched.hour, new Date(), sched.times_per_day || 1);
-    await db.query(`UPDATE schedules SET last_run_at = ${NOW_UTC_SQL}, next_run_at = $1 WHERE id = $2`, [nextRun, sched.id]);
+    await db.query(`UPDATE schedules SET last_run_at = now(), next_run_at = $1 WHERE id = $2`, [nextRun, sched.id]);
   }
 }
 
@@ -83,7 +109,7 @@ async function runDailyCostRefresh() {
   let today: string;
   try {
     const [subsRes, todayRes] = await Promise.all([
-      db.query(`SELECT id, name FROM subscriptions WHERE is_active = 1`),
+      db.query(`SELECT id, name FROM subscriptions WHERE is_active = true`),
       db.query(`SELECT to_char(now(), 'YYYY-MM-DD') AS today`),
     ]);
     subs = subsRes.rows;
@@ -123,6 +149,7 @@ async function runDailyHetznerCostRefresh() {
     if (await hasMeasuredHetznerSnapshotToday()) return;
 
     console.log('[scheduler] running daily Hetzner cost refresh');
+    const { runHetznerCostReport } = await getBtgRunner();
     const report = await runHetznerCostReport();
     await saveHetznerCostSnapshot({
       totalMonthly: report.totalMonthly,
@@ -162,7 +189,7 @@ async function runDailyBackfillHeal() {
   const db = await getDB();
   let subs: { id: string; name: string }[];
   try {
-    const { rows } = await db.query(`SELECT id, name FROM subscriptions WHERE is_active = 1`);
+    const { rows } = await db.query(`SELECT id, name FROM subscriptions WHERE is_active = true`);
     subs = rows;
   } catch (e) {
     console.error('[scheduler] failed to query subscriptions for daily backfill heal:', e);
@@ -234,6 +261,33 @@ async function runSchedulerCycle() {
   await healStaleAudits().catch(e => console.error('[scheduler] stale audit heal poll failed:', e));
 }
 
+// Distinct from the migrations advisory key. Serialises the whole cycle ACROSS
+// instances: createSingleFlightRunner only guards one process, so a
+// horizontally-scaled deploy would otherwise run every schedule and cost
+// refresh N times over. pg_try_advisory_lock is non-blocking — a second
+// instance whose lock attempt fails simply skips this tick (it re-checks in
+// 60s) rather than queueing behind the first. (Backend review E-4b.)
+const SCHEDULER_LOCK_KEY = 727315;
+
+async function withSchedulerLock(fn: () => Promise<void>): Promise<void> {
+  const db = await getDB();
+  const client = await db.connect();
+  try {
+    const { rows } = await client.query('SELECT pg_try_advisory_lock($1) AS ok', [SCHEDULER_LOCK_KEY]);
+    if (!rows[0]?.ok) {
+      console.log('[scheduler] another instance holds the cycle lock — skipping this tick');
+      return;
+    }
+    try {
+      await fn();
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [SCHEDULER_LOCK_KEY]).catch(() => {});
+    }
+  } finally {
+    client.release();
+  }
+}
+
 let started = false;
 
 /** Starts the in-process schedule poller. Idempotent — safe to call multiple
@@ -249,7 +303,7 @@ export function startScheduler() {
   // interval. Without this guard, the next tick starts a second cycle on top
   // of the first — the same pile-up this whole restructure exists to avoid,
   // just moved from "within one tick" to "across ticks".
-  const runCycle = createSingleFlightRunner(runSchedulerCycle);
+  const runCycle = createSingleFlightRunner(() => withSchedulerLock(runSchedulerCycle));
 
   setInterval(() => { runCycle(); }, POLL_INTERVAL_MS);
   // Also do an immediate check on startup rather than waiting a full interval.

@@ -42,6 +42,117 @@ export const MIGRATIONS: Migration[] = [
       await c.query(`CREATE INDEX IF NOT EXISTS idx_findings_remediation ON findings(remediation_status);`);
     },
   },
+  {
+    // INTEGER 0/1 flags → real boolean (E-7). Guarded so it is a no-op if the
+    // column is already boolean (fresh DB whose baseline shipped boolean, or a
+    // re-run), and only converts a column that is still integer. USING (x <> 0)
+    // maps 1→true, 0→false.
+    version: '0002_boolean_flags',
+    up: async (c) => {
+      await c.query(`
+        DO $$
+        BEGIN
+          IF (SELECT data_type FROM information_schema.columns
+              WHERE table_name = 'subscriptions' AND column_name = 'is_active') = 'integer' THEN
+            ALTER TABLE subscriptions ALTER COLUMN is_active DROP DEFAULT;
+            ALTER TABLE subscriptions ALTER COLUMN is_active TYPE boolean USING (is_active <> 0);
+            ALTER TABLE subscriptions ALTER COLUMN is_active SET DEFAULT true;
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns
+              WHERE table_name = 'schedules' AND column_name = 'enabled') = 'integer' THEN
+            ALTER TABLE schedules ALTER COLUMN enabled DROP DEFAULT;
+            ALTER TABLE schedules ALTER COLUMN enabled TYPE boolean USING (enabled <> 0);
+            ALTER TABLE schedules ALTER COLUMN enabled SET DEFAULT true;
+          END IF;
+        END $$;
+      `);
+    },
+  },
+  {
+    // JSON-in-TEXT columns → jsonb (E-5): validation on write + queryability.
+    // Guarded per column (no-op if already jsonb); the USING maps an empty or
+    // whitespace value to '[]' so the cast can never abort on a stray blank row
+    // — every real value was written via JSON.stringify and is valid JSON.
+    // Writes keep passing JSON.stringify(...) (a JSON string binds to jsonb);
+    // reads now get parsed objects, so JSON.parse was removed at the read sites.
+    version: '0003_jsonb_columns',
+    up: async (c) => {
+      await c.query(`
+        DO $$
+        BEGIN
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='audits' AND column_name='commands_run')='text' THEN
+            ALTER TABLE audits ALTER COLUMN commands_run DROP DEFAULT;
+            ALTER TABLE audits ALTER COLUMN commands_run TYPE jsonb USING (CASE WHEN btrim(coalesce(commands_run,''))='' THEN '[]' ELSE commands_run END::jsonb);
+            ALTER TABLE audits ALTER COLUMN commands_run SET DEFAULT '[]'::jsonb;
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='cost_snapshots' AND column_name='by_service')='text' THEN
+            ALTER TABLE cost_snapshots ALTER COLUMN by_service DROP DEFAULT;
+            ALTER TABLE cost_snapshots ALTER COLUMN by_service TYPE jsonb USING (CASE WHEN btrim(coalesce(by_service,''))='' THEN '[]' ELSE by_service END::jsonb);
+            ALTER TABLE cost_snapshots ALTER COLUMN by_service SET DEFAULT '[]'::jsonb;
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='cost_snapshots' AND column_name='by_resource_group')='text' THEN
+            ALTER TABLE cost_snapshots ALTER COLUMN by_resource_group DROP DEFAULT;
+            ALTER TABLE cost_snapshots ALTER COLUMN by_resource_group TYPE jsonb USING (CASE WHEN btrim(coalesce(by_resource_group,''))='' THEN '[]' ELSE by_resource_group END::jsonb);
+            ALTER TABLE cost_snapshots ALTER COLUMN by_resource_group SET DEFAULT '[]'::jsonb;
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='cost_snapshot_history' AND column_name='by_service')='text' THEN
+            ALTER TABLE cost_snapshot_history ALTER COLUMN by_service TYPE jsonb USING (CASE WHEN btrim(coalesce(by_service,''))='' THEN '[]' ELSE by_service END::jsonb);
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='hetzner_cost_snapshots' AND column_name='by_category')='text' THEN
+            ALTER TABLE hetzner_cost_snapshots ALTER COLUMN by_category TYPE jsonb USING (CASE WHEN btrim(coalesce(by_category,''))='' THEN '{}' ELSE by_category END::jsonb);
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='hetzner_cost_snapshots' AND column_name='by_type')='text' THEN
+            ALTER TABLE hetzner_cost_snapshots ALTER COLUMN by_type TYPE jsonb USING (CASE WHEN btrim(coalesce(by_type,''))='' THEN '{}' ELSE by_type END::jsonb);
+          END IF;
+          IF (SELECT data_type FROM information_schema.columns WHERE table_name='hetzner_cost_snapshots' AND column_name='unpriced')='text' THEN
+            ALTER TABLE hetzner_cost_snapshots ALTER COLUMN unpriced DROP DEFAULT;
+            ALTER TABLE hetzner_cost_snapshots ALTER COLUMN unpriced TYPE jsonb USING (CASE WHEN btrim(coalesce(unpriced,''))='' THEN '[]' ELSE unpriced END::jsonb);
+            ALTER TABLE hetzner_cost_snapshots ALTER COLUMN unpriced SET DEFAULT '[]'::jsonb;
+          END IF;
+        END $$;
+      `);
+    },
+  },
+  {
+    // TEXT UTC-string timestamps → timestamptz (E-3). Runs with the session in
+    // UTC (pool options in db/core.ts), so a naive 'YYYY-MM-DD HH24:MI:SS'
+    // string casts to the correct UTC instant. The type parser in db/core.ts
+    // formats them back to the same UTC string on read, so consumers are
+    // unchanged; storage is now a real instant, enabling SQL date math/indexes.
+    // snapshot_date is intentionally excluded — it is a calendar date
+    // ('YYYY-MM-DD'), not a timestamp. Guarded per column via data_type, so a
+    // no-op if already converted.
+    version: '0004_timestamptz',
+    up: async (c) => {
+      await c.query(`
+        DO $$
+        DECLARE r record;
+        BEGIN
+          FOR r IN
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND data_type = 'text'
+              AND column_name IN ('created_at','started_at','completed_at','fetched_at',
+                                  'requested_at','last_run_at','next_run_at','last_audit_at','approved_at')
+          LOOP
+            EXECUTE format('ALTER TABLE %I ALTER COLUMN %I DROP DEFAULT', r.table_name, r.column_name);
+            EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE timestamptz USING nullif(btrim(%I), %L)::timestamptz',
+                           r.table_name, r.column_name, r.column_name, '');
+          END LOOP;
+        END $$;
+      `);
+      // Restore now() defaults on the columns that carried a to_char(now())
+      // default before the type change (no-op-safe if already set).
+      await c.query(`ALTER TABLE subscriptions       ALTER COLUMN created_at   SET DEFAULT now();`);
+      await c.query(`ALTER TABLE findings            ALTER COLUMN created_at   SET DEFAULT now();`);
+      await c.query(`ALTER TABLE schedules           ALTER COLUMN created_at   SET DEFAULT now();`);
+      await c.query(`ALTER TABLE users               ALTER COLUMN created_at   SET DEFAULT now();`);
+      await c.query(`ALTER TABLE analysis_requests   ALTER COLUMN requested_at SET DEFAULT now();`);
+      await c.query(`ALTER TABLE cost_snapshots      ALTER COLUMN fetched_at   SET DEFAULT now();`);
+      await c.query(`ALTER TABLE cost_fetch_requests ALTER COLUMN requested_at SET DEFAULT now();`);
+    },
+  },
 ];
 
 /** Applies every migration not yet recorded in schema_migrations, in order,

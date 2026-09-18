@@ -41,7 +41,7 @@ export async function listUsers(status?: string): Promise<User[]> {
 export async function updateUserStatus(id: string, status: string, approvedBy: string): Promise<void> {
   const db = await getDB();
   await db.query(
-    `UPDATE users SET status = $1, approved_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS'), approved_by = $2 WHERE id = $3`,
+    `UPDATE users SET status = $1, approved_at = now(), approved_by = $2 WHERE id = $3`,
     [status, approvedBy, id]
   );
 }

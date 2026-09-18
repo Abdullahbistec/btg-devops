@@ -1,7 +1,27 @@
-import { Pool } from 'pg';
+import { Pool, types } from 'pg';
 import { randomUUID } from 'crypto';
 import { runMigrations } from '../migrations';
 
+// Timestamp columns are stored as timestamptz (migration 0004), but the whole
+// codebase reads them as the canonical UTC 'YYYY-MM-DD HH24:MI:SS' string (see
+// lib/schedule-time.ts's invariant). Every connection runs in UTC (the pool's
+// `options` below), so Postgres renders timestamptz with a +00 offset — taking
+// the first 19 chars yields exactly that UTC wall-clock string, so the ~95
+// call sites that consumed the old TEXT columns keep working unchanged.
+//
+// Registered lazily from inside getDB() (which only ever runs in the Node.js
+// server), NOT at module top level: a top-level side effect here forces pg's
+// node-only internals into the Edge bundle that instrumentation.ts pulls in,
+// which fails the build with "Can't resolve 'crypto'". pg.types is a global
+// singleton, so registering once is enough and safe.
+const toUtcString = (v: string | null) => (v ? v.slice(0, 19).replace('T', ' ') : v);
+let _tsParsersRegistered = false;
+function registerTimestampParsers() {
+  if (_tsParsersRegistered) return;
+  types.setTypeParser(1114, toUtcString); // timestamp without time zone
+  types.setTypeParser(1184, toUtcString); // timestamp with time zone
+  _tsParsersRegistered = true;
+}
 
 let _pool: Pool | null = null;
 let _ready: Promise<void> | null = null;
@@ -15,11 +35,17 @@ let _ready: Promise<void> | null = null;
  * file open. */
 export async function getDB(): Promise<Pool> {
   if (!_pool) {
+    registerTimestampParsers();
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) {
       throw new Error('DATABASE_URL is not set — see web/.env.local');
     }
-    const pool = new Pool({ connectionString });
+    // options '-c timezone=UTC' fixes the session timezone at connection
+    // startup (before any query runs — race-free), so timestamptz values are
+    // read and written in UTC regardless of the host's own zone. Critical on a
+    // +05:30 host, exactly the offset lib/schedule-time.ts documents being
+    // bitten by.
+    const pool = new Pool({ connectionString, options: '-c timezone=UTC' });
     // pg emits 'error' on *idle* clients — a Postgres restart or a dropped
     // connection, not anything a caller awaited. With no listener that is an
     // unhandled EventEmitter error, which takes the whole Next.js process
