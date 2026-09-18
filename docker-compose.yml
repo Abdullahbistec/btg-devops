@@ -17,17 +17,22 @@ services:
     env_file:
       - web/.env.local
     environment:
-      # Overrides web/.env.local's CLAUDE_DRAIN_ENABLED=1 for this container
-      # specifically. The image has no `claude` CLI and no credentials, so
-      # leaving the flag on would mean every Summarize click spawns a
-      # process that can't exist (ENOENT), caught by the existing try/catch
-      # in routine-trigger.ts, and the request just sits pending forever
-      # with nothing on screen explaining why. Disabled beats silently
-      # broken. See docs/docker-claude-drain.md for what real support would
-      # require (installing the CLI, plus mounting a Claude account's
-      # credentials into a server container — a decision for whoever owns
-      # that account, not a default).
-      - CLAUDE_DRAIN_ENABLED=0
+      # `claude -p` (see web/lib/routine-trigger.ts) picks this up as its
+      # auth for a headless run — no `claude login` session or keychain
+      # needed inside the container. Generated once, on whichever account
+      # should own the drain's subscription usage, via `claude setup-token`
+      # on a machine with a browser; the resulting token is set as
+      # CLAUDE_CODE_OAUTH_TOKEN in web/.env.local (gitignored), not here,
+      # since it's a secret. See docs/docker-claude-drain.md — mounting
+      # ~/.claude/.credentials.json instead does NOT work on a Windows host:
+      # the real secret lives in Windows Credential Manager (DPAPI-bound to
+      # this Windows account), and the JSON file alone left the CLI reporting
+      # "Not logged in" inside the Linux container.
+      #
+      # web/.env.local's CLAUDE_DRAIN_ENABLED=1 now applies as-is inside the
+      # container too, now that the CLI (see Dockerfile) + token above make
+      # it real instead of a spawn that can never succeed. See
+      # docs/docker-claude-drain.md for how to verify it.
       # Overrides web/.env.local's BTG_DEVOPS_PATH=../btg-devops.exe, which is
       # only correct for the Windows host this repo is developed on. The
       # Dockerfile's `go build` runs with no GOOS override, producing a
