@@ -22,6 +22,9 @@ web/tsconfig.tsbuildinfo
 /out/
 /state/
 
+# R6 cloud-credential-review artifact — principal/role IDs, not for commit
+web/role_assignments.json
+
 # Playwright E2E
 web/test-results/
 web/playwright-report/
