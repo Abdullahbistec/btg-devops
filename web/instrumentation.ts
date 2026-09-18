@@ -18,8 +18,18 @@ export async function register() {
   // Only run in the Node.js server process — this hook also fires for the Edge
   // runtime (middleware), which can't run the scheduler (needs node:sqlite,
   // child_process, etc.).
-  if (process.env.NEXT_RUNTIME === 'nodejs' && schedulerEnabled()) {
+  if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+
+  if (schedulerEnabled()) {
     const { startScheduler } = await import('@/lib/scheduler');
     startScheduler();
   }
+
+  // Unlike the scheduler, this isn't gated on production vs dev — it's an
+  // idle listener until something calls it, and gating it the same way
+  // would mean a second manual terminal is still needed in dev, which is
+  // exactly what this exists to remove. See web/lib/mcp-runner.ts for the
+  // real gate (both MCP tokens must be configured).
+  const { startMcpServer } = await import('@/lib/mcp-runner');
+  await startMcpServer();
 }
