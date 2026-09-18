@@ -1,5 +1,7 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getDB, getSubscription, getCostSnapshot } from '@/lib/db';
+import { isAuthenticatedRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 // Reads ONLY the last snapshot written by the MCP + Claude-routine mechanism
 // (see docs/ai-analysis-routine-setup.md) — this route never calls Azure
@@ -7,7 +9,10 @@ import { getDB, getSubscription, getCostSnapshot } from '@/lib/db';
 // (tenant-wide, shared across every caller) that calling it from a page
 // load caused recurring user-visible 429s. To request a fresh number, POST
 // /api/cost-requests instead and poll it — see web/app/cost/page.tsx.
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const url = new URL(req.url);
     const subParam = url.searchParams.get('subscription_id');
@@ -41,6 +46,6 @@ export async function GET(req: Request) {
       monthlyBudget: sub.monthly_budget,
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/cost/spend');
   }
 }

@@ -1,11 +1,7 @@
 import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
-import { createHmac } from 'crypto';
 import { verifyOTP } from '@/lib/otp-store';
-
-function makeSessionToken(secret: string, identity: string) {
-  return createHmac('sha256', secret).update(identity).digest('hex');
-}
+import { makeSessionToken, requireSessionSecret, sessionCookieOptions } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   const pendingEmail = req.cookies.get('btg_otp_pending')?.value ?? '';
@@ -20,7 +16,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Enter a valid 6-digit code' }, { status: 400 });
   }
 
-  const result = verifyOTP(pendingEmail, otp);
+  const result = await verifyOTP(pendingEmail, otp);
 
   if (result === 'expired') {
     return NextResponse.json({ error: 'Code expired. Request a new one.' }, { status: 401 });
@@ -33,12 +29,17 @@ export async function POST(req: NextRequest) {
   }
 
   // OTP valid — issue session tied to this user's email
-  const secret = process.env.SESSION_SECRET ?? 'btg-devops-default-secret';
-  const token = makeSessionToken(secret, pendingEmail);
+  let token: string;
+  try {
+    token = makeSessionToken(requireSessionSecret(), pendingEmail);
+  } catch (e) {
+    console.error('[auth/verify-otp]', e);
+    return NextResponse.json({ error: 'Server is not configured for sign-in.' }, { status: 500 });
+  }
 
   const res = NextResponse.json({ ok: true });
-  res.cookies.set('btg_session', token, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 8, path: '/' });
-  res.cookies.set('btg_identity', pendingEmail, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 8, path: '/' });
-  res.cookies.set('btg_otp_pending', '', { maxAge: 0, path: '/' });
+  res.cookies.set('btg_session', token, sessionCookieOptions(60 * 60 * 8));
+  res.cookies.set('btg_identity', pendingEmail, sessionCookieOptions(60 * 60 * 8));
+  res.cookies.set('btg_otp_pending', '', sessionCookieOptions(0));
   return res;
 }

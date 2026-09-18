@@ -1,5 +1,7 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getDB, listSubscriptionsBasic } from '@/lib/db';
+import { isAuthenticatedRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 interface AuditSummary {
   id: string;
@@ -13,7 +15,10 @@ interface AuditSummary {
 
 // Read-only, aggregate-only data (no credentials) — safe for viewer role, same
 // as /api/dashboard.
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const db = await getDB();
     const subs = await listSubscriptionsBasic();
@@ -45,6 +50,6 @@ export async function GET() {
 
     return NextResponse.json(results);
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/subscriptions/compare');
   }
 }

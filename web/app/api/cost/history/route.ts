@@ -1,12 +1,17 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getDB, getSubscription, getCostSnapshotHistory } from '@/lib/db';
+import { isAuthenticatedRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
 
 // Sibling to /api/cost/spend — that route reads the latest-only
 // cost_snapshots row; this one reads the additive cost_snapshot_history
 // table (see docs/superpowers/specs/2026-08-25-cost-snapshot-history-design.md).
 // Same subscription-resolution fallback as /api/cost/spend, kept identical
 // on purpose so the two routes behave consistently for the same caller.
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const url = new URL(req.url);
     const subParam = url.searchParams.get('subscription_id');
@@ -33,6 +38,6 @@ export async function GET(req: Request) {
       })),
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/cost/history');
   }
 }

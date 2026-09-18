@@ -79,6 +79,9 @@ export interface NormalizedFinding {
   location: string;
   monthly_cost: number | null;
   monthly_saving: number | null;
+  confidence: number | null;
+  reasoning: string;
+  currency: string | null;
 }
 
 interface RawFinding {
@@ -90,6 +93,11 @@ interface RawFinding {
   location?: string;
   monthly_cost?: number;
   monthly_saving?: number;
+  // Set only on findings produced by the Claude-based analysis engine
+  // (cmd/storage_claude.go's handoffFindingsToStorageReport and friends) —
+  // absent/zero-value on the Go rule-check fallback path.
+  confidence?: number;
+  reasoning?: string;
   // Azure fields
   account_name?: string;
   resource_name?: string;
@@ -121,6 +129,7 @@ interface RawFinding {
   datacenter?: string;
   home_location?: string;
   est_monthly_waste_eur?: number;
+  currency?: string;
 }
 
 function extractResource(raw: RawFinding): string {
@@ -151,15 +160,24 @@ export function extractMonthlySaving(raw: RawFinding): number | null {
   return raw.monthly_saving ?? null;
 }
 
+export function extractConfidence(raw: RawFinding): number | null {
+  return raw.confidence ?? null;
+}
+
+export function extractCurrency(raw: RawFinding): string | null {
+  return raw.currency ?? null;
+}
+
 function runCommand(
   command: string,
   env: Record<string, string>,
-  timeoutMs = 1200000
+  timeoutMs = 1200000,
+  extraArgs: string[] = []
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       BTG_PATH,
-      ['analyze', command, '--output', 'json'],
+      ['analyze', command, '--output', 'json', ...extraArgs],
       { env: { ...process.env, ...env }, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err) {
@@ -248,8 +266,110 @@ export async function runSingleCommand(
       location: extractLocation(f),
       monthly_cost: extractMonthlyCost(f),
       monthly_saving: extractMonthlySaving(f),
+      confidence: extractConfidence(f),
+      reasoning: f.reasoning || '',
+      currency: extractCurrency(f),
     })),
   };
+}
+
+export interface HetznerCostResult {
+  currency: string;
+  totalMonthly: number;
+  byCategory: Record<string, number>;
+  byType: Record<string, { count: number; monthly_total: number }>;
+  unpriced?: string[];
+  estimate: boolean;
+  note: string;
+}
+
+interface RawHetznerCostReport {
+  currency?: string;
+  total_monthly?: number;
+  by_category?: Record<string, number>;
+  by_type?: Record<string, { count: number; monthly_total: number }>;
+  unpriced?: string[];
+  estimate?: boolean;
+  note?: string;
+}
+
+/**
+ * Parses and validates the `analyze hetzner-cost` JSON output.
+ *
+ * A cost path must never quietly report 0 — this feature exists specifically
+ * because the previous code silently assumed EUR and produced wrong figures.
+ * `currency` and `total_monthly` are therefore required and validated: if the
+ * CLI's output shape ever changes (a renamed field, a format change), this
+ * throws a clear error naming what's missing rather than falling back to a
+ * spurious "$0, EUR" report that would then get persisted and render on the
+ * dashboard as though Hetzner costs nothing. `by_category`/`by_type`
+ * defaulting to `{}` is fine — an account with no resources of a kind
+ * legitimately has none — but the two required fields above are never
+ * legitimately absent from a well-formed report.
+ *
+ * Exported as a standalone pure function (rather than inlined in
+ * runHetznerCostReport) so it can be unit-tested directly without shelling
+ * out — matching how the rest of this execFile-based file stays untested at
+ * the process-spawning layer.
+ */
+export function parseHetznerCostReport(stdout: string): HetznerCostResult {
+  const parsed: RawHetznerCostReport = JSON.parse(stdout);
+
+  if (typeof parsed.currency !== 'string' || parsed.currency.trim() === '') {
+    throw new Error(`hetzner-cost: missing or invalid "currency" in output (got ${JSON.stringify(parsed.currency)})`);
+  }
+  if (typeof parsed.total_monthly !== 'number' || Number.isNaN(parsed.total_monthly)) {
+    throw new Error(`hetzner-cost: missing or invalid "total_monthly" in output (got ${JSON.stringify(parsed.total_monthly)})`);
+  }
+
+  return {
+    currency: parsed.currency,
+    totalMonthly: parsed.total_monthly,
+    byCategory: parsed.by_category || {},
+    byType: parsed.by_type || {},
+    unpriced: parsed.unpriced,
+    estimate: parsed.estimate ?? true,
+    note: parsed.note || '',
+  };
+}
+
+/**
+ * Runs `analyze hetzner-cost` and parses its cost-report shape directly.
+ *
+ * This deliberately does NOT go through runSingleCommand: that function
+ * parses `{ findings: [], summary: {} }` and maps findings, but
+ * hetzner-cost's output is a completely different shape —
+ * `{ currency, total_monthly, by_category, by_type, unpriced, estimate,
+ * note }`. Routing it through runSingleCommand would parse successfully,
+ * find no `findings` array, and silently return zero findings instead of
+ * erroring — the cost data would just be dropped.
+ *
+ * Hetzner auth is the single HCLOUD_TOKEN env var, not the Azure
+ * service-principal set — mirrors the isHetznerCommand branch in
+ * runSingleCommand above.
+ */
+export async function runHetznerCostReport(hcloudToken?: string): Promise<HetznerCostResult> {
+  const env: Record<string, string> = { HCLOUD_TOKEN: hcloudToken || process.env.HCLOUD_TOKEN || '' };
+  const stdout = await runCommand('hetzner-cost', env);
+  return parseHetznerCostReport(stdout);
+}
+
+export interface HetznerReconstructedPoint { day: string; total_monthly: number; currency: string }
+
+/** Runs the CLI's run-rate reconstruction, replaying resource creation dates
+ * against today's list prices to derive past days.
+ *
+ * This exists because Hetzner has no spend history to fetch — without it the
+ * chart is empty until enough days accumulate naturally. The figures are
+ * derived, not observed, and are stored flagged as such. */
+export async function runHetznerCostHistory(days: number, hcloudToken?: string): Promise<HetznerReconstructedPoint[]> {
+  const env: Record<string, string> = { HCLOUD_TOKEN: hcloudToken || process.env.HCLOUD_TOKEN || '' };
+  const stdout = await runCommand('hetzner-cost', env, 1200000, ['--history-days', String(days)]);
+  const parsed = JSON.parse(stdout) as { history?: HetznerReconstructedPoint[] };
+  if (!Array.isArray(parsed.history)) {
+    throw new Error('hetzner-cost: --history-days produced no "history" array');
+  }
+  return parsed.history;
 }
 
 export async function runAllCommands(
@@ -257,7 +377,10 @@ export async function runAllCommands(
   credentials: Credentials,
   ppCredentials?: Credentials,
   hcloudToken?: string,
-  onProgress?: (cmd: string, count: number) => void
+  // Typed as Command, not string: runAllCommands only ever invokes this with
+  // an element of `commands`. Declaring it as string forced every caller that
+  // wanted to index back into that array to fail typechecking.
+  onProgress?: (cmd: Command, count: number) => void
 ): Promise<{ findings: NormalizedFinding[]; ran: Command[]; errors: string[]; ppErrors: string[]; hetznerErrors: string[]; resourcesScanned: number }> {
   const allFindings: NormalizedFinding[] = [];
   const ran: Command[] = [];

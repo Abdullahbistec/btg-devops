@@ -14,11 +14,9 @@ import (
 
 // ---------- data types ----------
 
-// hetznerVolumeGBMonthlyEUR is Hetzner's published list price per GB/month
-// for Volumes (as of this writing). There is no per-resource historical
-// billing API (see docs/provider-extension-plan.md §6.3), so waste is
-// reported as a list-price estimate, not an actual spend trend.
-const hetznerVolumeGBMonthlyEUR = 0.0440
+// REMOVED: const hetznerVolumeGBMonthlyEUR = 0.0440
+// Priced from the live API instead — the constant was both the wrong
+// currency for this account and 74% below the real list price.
 
 type HetznerVolumeFinding struct {
 	Severity        Severity `json:"severity"`
@@ -27,6 +25,7 @@ type HetznerVolumeFinding struct {
 	SizeGB          int      `json:"size_gb"`
 	DaysUnattached  int      `json:"days_unattached"`
 	EstMonthlyWaste float64  `json:"est_monthly_waste_eur"`
+	Currency        string   `json:"currency"`
 	Description     string   `json:"description"`
 	Recommendation  string   `json:"recommendation"`
 }
@@ -35,7 +34,7 @@ type HetznerVolumeSummary struct {
 	TotalVolumes       int            `json:"total_volumes"`
 	UnattachedVolumes  int            `json:"unattached_volumes"`
 	UnattachedGB       int            `json:"unattached_gb"`
-	EstMonthlyWasteEUR float64        `json:"est_monthly_waste_eur"`
+	EstMonthlyWaste    float64        `json:"est_monthly_waste_eur"`
 	FindingsBySeverity map[string]int `json:"findings_by_severity"`
 }
 
@@ -113,7 +112,15 @@ func computeHetznerVolumesFindings(ctx context.Context, token string) (HetznerVo
 		TotalVolumes:       len(volumes),
 		FindingsBySeverity: map[string]int{},
 	}
-	findings := hetznerVolumeFindings(volumes, &summary)
+	pricing, err := fetchHetznerPricing(ctx, token)
+	if err != nil {
+		return HetznerVolumeReport{}, fmt.Errorf("fetching hetzner pricing: %w", err)
+	}
+	perGB, ok := pricing.VolumeMonthlyPerGB()
+	if !ok {
+		return HetznerVolumeReport{}, fmt.Errorf("hetzner pricing payload has no usable volume price")
+	}
+	findings := hetznerVolumeFindings(volumes, &summary, perGB, pricing.Currency())
 
 	for _, f := range findings {
 		summary.FindingsBySeverity[string(f.Severity)]++
@@ -125,7 +132,7 @@ func computeHetznerVolumesFindings(ctx context.Context, token string) (HetznerVo
 // hetznerVolumeFindings is split out from computeHetznerVolumesFindings so
 // the detection logic is testable against in-memory fixtures, with no
 // network involved.
-func hetznerVolumeFindings(volumes []hetznerVolume, summary *HetznerVolumeSummary) []HetznerVolumeFinding {
+func hetznerVolumeFindings(volumes []hetznerVolume, summary *HetznerVolumeSummary, pricePerGB float64, currency string) []HetznerVolumeFinding {
 	var findings []HetznerVolumeFinding
 
 	for _, v := range volumes {
@@ -134,11 +141,11 @@ func hetznerVolumeFindings(volumes []hetznerVolume, summary *HetznerVolumeSummar
 		}
 
 		days := hetznerDaysSince(v.Created)
-		waste := float64(v.Size) * hetznerVolumeGBMonthlyEUR
+		waste := float64(v.Size) * pricePerGB
 
 		summary.UnattachedVolumes++
 		summary.UnattachedGB += v.Size
-		summary.EstMonthlyWasteEUR += waste
+		summary.EstMonthlyWaste += waste
 
 		// Freshly-created (still being provisioned) volumes get a lower
 		// severity than ones that have clearly sat unattached for a while.
@@ -154,7 +161,8 @@ func hetznerVolumeFindings(volumes []hetznerVolume, summary *HetznerVolumeSummar
 			SizeGB:          v.Size,
 			DaysUnattached:  days,
 			EstMonthlyWaste: waste,
-			Description:     fmt.Sprintf("'%s' (%dGB) is not attached to any server — est. €%.2f/month at list price", v.Name, v.Size, waste),
+			Currency:        currency,
+			Description:     fmt.Sprintf("'%s' (%dGB) is not attached to any server — est. %.2f %s/month at list price", v.Name, v.Size, waste, currency),
 			Recommendation:  "Attach the volume to a server, or delete it if it's no longer needed.",
 		})
 	}
@@ -228,8 +236,12 @@ func printHetznerVolumesTable(r HetznerVolumeReport) {
 	fmt.Println(strings.Repeat("-", 50))
 	fmt.Printf("  Total Volumes:        %d\n", r.Summary.TotalVolumes)
 	fmt.Printf("  Unattached:           %d (%dGB)\n", r.Summary.UnattachedVolumes, r.Summary.UnattachedGB)
-	if r.Summary.EstMonthlyWasteEUR > 0 {
-		fmt.Printf("  Est. Monthly Waste:   €%.2f (list price)\n", r.Summary.EstMonthlyWasteEUR)
+	if r.Summary.EstMonthlyWaste > 0 {
+		currency := ""
+		if len(r.Findings) > 0 {
+			currency = r.Findings[0].Currency
+		}
+		fmt.Printf("  Est. Monthly Waste:   %.2f %s (list price)\n", r.Summary.EstMonthlyWaste, currency)
 	}
 	fmt.Println()
 

@@ -99,7 +99,7 @@ func TestHetznerServerFindings_HealthyServerProducesNoFindings(t *testing.T) {
 func TestHetznerVolumeFindings_AttachedVolumeSkipped(t *testing.T) {
 	server := 42
 	volumes := []hetznerVolume{{Name: "vol-attached", Size: 10, Server: &server}}
-	findings := hetznerVolumeFindings(volumes, &HetznerVolumeSummary{})
+	findings := hetznerVolumeFindings(volumes, &HetznerVolumeSummary{}, 0.0767, "USD")
 	if len(findings) != 0 {
 		t.Errorf("got %+v, want no findings for an attached volume", findings)
 	}
@@ -108,7 +108,7 @@ func TestHetznerVolumeFindings_AttachedVolumeSkipped(t *testing.T) {
 func TestHetznerVolumeFindings_UnattachedRecent_Warning(t *testing.T) {
 	volumes := []hetznerVolume{{Name: "vol-new", Size: 10, Server: nil, Created: nowMinusDays(1)}}
 	summary := &HetznerVolumeSummary{}
-	findings := hetznerVolumeFindings(volumes, summary)
+	findings := hetznerVolumeFindings(volumes, summary, 0.0767, "USD")
 
 	if summary.UnattachedVolumes != 1 || summary.UnattachedGB != 10 {
 		t.Errorf("summary = %+v, want UnattachedVolumes=1 UnattachedGB=10", summary)
@@ -120,10 +120,36 @@ func TestHetznerVolumeFindings_UnattachedRecent_Warning(t *testing.T) {
 
 func TestHetznerVolumeFindings_UnattachedOld_Critical(t *testing.T) {
 	volumes := []hetznerVolume{{Name: "vol-old", Size: 100, Server: nil, Created: nowMinusDays(30)}}
-	findings := hetznerVolumeFindings(volumes, &HetznerVolumeSummary{})
+	findings := hetznerVolumeFindings(volumes, &HetznerVolumeSummary{}, 0.0767, "USD")
 
 	if len(findings) != 1 || findings[0].Severity != Critical {
 		t.Errorf("got %+v, want one Critical finding for a long-unattached volume", findings)
+	}
+}
+
+func TestHetznerVolumeFindings_UsesLivePriceAndCurrency(t *testing.T) {
+	volumes := []hetznerVolume{
+		{Name: "orphan-1", Size: 100, Server: nil, Created: time.Now().AddDate(0, 0, -30).Format(time.RFC3339)},
+	}
+	summary := &HetznerVolumeSummary{}
+
+	findings := hetznerVolumeFindings(volumes, summary, 0.0767, "USD")
+
+	if len(findings) != 1 {
+		t.Fatalf("got %d findings, want 1", len(findings))
+	}
+	// 100GB x 0.0767 = 7.67, not the old hardcoded 100 x 0.0440 = 4.40
+	if got := findings[0].EstMonthlyWaste; got < 7.66 || got > 7.68 {
+		t.Errorf("EstMonthlyWaste = %v, want ~7.67", got)
+	}
+	if strings.Contains(findings[0].Description, "€") {
+		t.Errorf("description still uses a euro sign on a USD account: %q", findings[0].Description)
+	}
+	if !strings.Contains(findings[0].Description, "USD") && !strings.Contains(findings[0].Description, "$") {
+		t.Errorf("description does not state the currency: %q", findings[0].Description)
+	}
+	if findings[0].Currency != "USD" {
+		t.Errorf("Currency = %q, want %q", findings[0].Currency, "USD")
 	}
 }
 
@@ -340,4 +366,29 @@ func nowMinusDays(d int) string {
 
 func nowPlusDays(d int) string {
 	return time.Now().AddDate(0, 0, d).UTC().Format("2006-01-02T15:04:05Z07:00")
+}
+
+// ---------- server cost tests ----------
+
+func TestHetznerServerMonthlyCost_UsesTypeAndLocation(t *testing.T) {
+	p := loadPricingFixture(t)
+	s := hetznerServer{
+		Name:       "web-1",
+		ServerType: hetznerServerType{Name: "cpx11"},
+		Datacenter: hetznerDatacenter{Location: hetznerLocation{Name: "fsn1"}},
+	}
+
+	cost, ok := hetznerServerMonthlyCost(s, p)
+	if !ok || cost <= 0 {
+		t.Errorf("got (%v, %v), want a positive price", cost, ok)
+	}
+}
+
+func TestHetznerServerMonthlyCost_UnknownTypeReportsMiss(t *testing.T) {
+	p := loadPricingFixture(t)
+	s := hetznerServer{Name: "x", ServerType: hetznerServerType{Name: "made-up"}}
+
+	if _, ok := hetznerServerMonthlyCost(s, p); ok {
+		t.Error("reported found for an unknown server type, want miss")
+	}
 }

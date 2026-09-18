@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
     smtp: !!(process.env.SMTP_PASS && process.env.SMTP_PASS !== 'your-email-password-here'),
     azureCreds: !!(process.env.AZURE_TENANT_ID && process.env.AZURE_CLIENT_ID && process.env.AZURE_CLIENT_SECRET),
     adminEmail: !!process.env.ADMIN_EMAIL,
-    sessionSecret: !!(process.env.SESSION_SECRET && process.env.SESSION_SECRET !== 'btg-devops-default-secret'),
+    sessionSecret: !!process.env.SESSION_SECRET,
     ppCreds: !!(process.env.BTG_PP_CLIENT_ID || process.env.BTG_PP_CLIENT_SECRET),
   };
 

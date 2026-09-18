@@ -26,7 +26,15 @@ export async function middleware(req: NextRequest) {
 
   const token    = req.cookies.get('btg_session')?.value ?? '';
   const identity = req.cookies.get('btg_identity')?.value ?? '';
-  const secret   = process.env.SESSION_SECRET ?? 'btg-devops-default-secret';
+  // Deliberately not imported from @/lib/auth: this file runs in the Edge
+  // runtime, which has no node:crypto and no pg. Same rule as
+  // requireSessionSecret() there — an unset secret rejects every request
+  // rather than validating tokens against a default anyone can read.
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) {
+    console.error('[middleware] SESSION_SECRET is not set — rejecting every authenticated request');
+    return NextResponse.redirect(new URL('/login', req.url));
+  }
   const adminUsername = process.env.ADMIN_USERNAME ?? 'admin';
   const adminEmail    = (process.env.ADMIN_EMAIL ?? '').toLowerCase();
 

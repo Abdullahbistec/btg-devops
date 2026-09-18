@@ -21,3 +21,12 @@ web/tsconfig.tsbuildinfo
 # scripts/pp-governance-agent.js output — real customer findings, never committed
 /out/
 /state/
+
+# Playwright E2E
+web/test-results/
+web/playwright-report/
+web/blob-report/
+web/.playwright/
+
+# graphify knowledge-graph build output
+graphify-out/

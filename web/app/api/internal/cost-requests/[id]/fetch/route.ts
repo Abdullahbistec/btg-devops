@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isInternalServiceRequest } from '@/lib/auth';
 import { getCostFetchRequest, completeCostFetchRequest, failCostFetchRequest } from '@/lib/db';
 import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
+import { logServerError } from '@/lib/api-error';
 
 /** Backs the MCP server's fetch_cost_data tool. This is the ONLY place that
  * actually calls Azure Cost Management live — Azure credentials never leave
@@ -13,11 +14,12 @@ import { refreshCostSnapshot, backfillCostHistory } from '@/lib/costManagement';
  * MonthToDate fetch; 'backfill' is a one-time historical fill of past
  * calendar months (backfillCostHistory), used to seed real Billing History
  * data instead of waiting for it to accumulate day by day. */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!isInternalServiceRequest(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
-  const request = await getCostFetchRequest(params.id);
+  const { id } = await params;
+  const request = await getCostFetchRequest(id);
   if (!request) {
     return NextResponse.json({ error: 'cost fetch request not found' }, { status: 404 });
   }
@@ -25,12 +27,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     if (request.type === 'backfill') {
       const { saved, skipped, errors } = await backfillCostHistory(request.subscription_id, request.months ?? 6);
-      await completeCostFetchRequest(params.id, errors.length ? `Backfilled ${saved} month(s), ${skipped} already had data, ${errors.length} failed: ${errors.join('; ')}` : undefined);
+      await completeCostFetchRequest(id, errors.length ? `Backfilled ${saved} month(s), ${skipped} already had data, ${errors.length} failed: ${errors.join('; ')}` : undefined);
       return NextResponse.json({ ok: true, backfilled: saved, skipped, errors });
     }
 
     const payload = await refreshCostSnapshot(request.subscription_id);
-    await completeCostFetchRequest(params.id);
+    await completeCostFetchRequest(id);
     return NextResponse.json({
       ok: true,
       subscription: payload.subscription.name,
@@ -38,8 +40,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       currency: payload.currency,
     });
   } catch (e) {
-    const message = (e as Error).message;
-    await failCostFetchRequest(params.id, message);
+    const correlationId = logServerError(e, 'POST /api/internal/cost-requests/[id]/fetch');
+    const message = `Cost fetch failed on our side. Reference: ${correlationId}`;
+    await failCostFetchRequest(id, message);
     return NextResponse.json({ ok: false, error: message }, { status: 502 });
   }
 }

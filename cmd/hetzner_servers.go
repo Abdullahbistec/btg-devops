@@ -49,9 +49,21 @@ type hetznerServer struct {
 	Status       string            `json:"status"`
 	Created      string            `json:"created"`
 	BackupWindow string            `json:"backup_window"`
+	ServerType   hetznerServerType `json:"server_type"`
 	Datacenter   hetznerDatacenter `json:"datacenter"`
 	Image        *hetznerImage     `json:"image"`
 	PublicNet    hetznerPublicNet  `json:"public_net"`
+}
+
+type hetznerServerType struct {
+	Name string `json:"name"`
+}
+
+// hetznerServerMonthlyCost prices one server by its type and datacenter
+// location. Returns found=false for an unknown type rather than 0, so a
+// pricing gap surfaces instead of quietly making a server look free.
+func hetznerServerMonthlyCost(s hetznerServer, p *hetznerPricing) (float64, bool) {
+	return p.ServerMonthly(s.ServerType.Name, s.Datacenter.Location.Name)
 }
 
 type hetznerDatacenter struct {

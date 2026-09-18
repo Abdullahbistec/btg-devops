@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listUsers, updateUserStatus, deleteUser, getUserByEmail, getDB } from '@/lib/db';
+import { recordAuditLog } from '@/lib/audit-log';
 
 async function isAdmin(req: NextRequest): Promise<boolean> {
   const identity = req.cookies.get('btg_identity')?.value ?? '';
@@ -31,6 +32,7 @@ export async function PATCH(req: NextRequest) {
     const db = await getDB();
     await db.query('UPDATE users SET role = $1 WHERE id = $2', [role, id]);
   }
+  await recordAuditLog(req, 'user.update', { id, status, role });
   return NextResponse.json({ ok: true });
 }
 
@@ -39,5 +41,6 @@ export async function DELETE(req: NextRequest) {
   const id = req.nextUrl.searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
   await deleteUser(id);
+  await recordAuditLog(req, 'user.delete', { id });
   return NextResponse.json({ ok: true });
 }

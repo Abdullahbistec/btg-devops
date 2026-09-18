@@ -1,0 +1,9 @@
+.git
+.specclaw
+docs
+node_modules
+web/node_modules
+web/.next
+btg-devops
+btg-devops.exe
+*.log

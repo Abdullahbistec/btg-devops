@@ -2,6 +2,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import Sidebar from '@/components/Sidebar';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
+import { resourceGroupLabel } from '@/lib/cost-labels';
 
 interface CostFinding {
   id: string;
@@ -84,7 +85,7 @@ function shortDate(iso: string) {
 }
 
 function monthLabel(iso: string) {
-  return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'long' });
 }
 
 function addDaysIso(iso: string, n: number): string {
@@ -147,7 +148,17 @@ function deltaForWindow(points: HistoryPoint[], winStart: string, winEnd: string
     let baseService: Record<string, number> = {};
     if (!isMonthStart) {
       const before = findLastBefore(points, cursor);
-      if (before) { baseTotal = before.totalCost; baseService = toServiceMap(before.byService); }
+      // A baseline is only valid within the same calendar month as `cursor`
+      // — MTD resets to 0 on the 1st, so a prior month's end-of-month total
+      // (e.g. a backfilled row) is not "the value right before this point,"
+      // it's a different month's cumulative total entirely. Using it as a
+      // baseline here previously made endTotal - baseTotal deeply negative
+      // whenever real data for the current month started partway through
+      // (e.g. a mid-month subscription start), clamping the whole window's
+      // total to 0 via Math.max(0, ...) below.
+      if (before && before.date.slice(0, 7) === cursor.slice(0, 7)) {
+        baseTotal = before.totalCost; baseService = toServiceMap(before.byService);
+      }
     }
 
     const end = findLastAtOrBefore(points, segEndIso, cursor);
@@ -367,19 +378,22 @@ const BACKFILL_MONTHS = 6;
 const BACKFILL_POLL_MS = 3000;
 const BACKFILL_TIMEOUT_MS = 10 * 60 * 1000; // 6 months, each now retrying up to 5x through Azure throttling — give it real room before assuming it's stuck
 
+// Comfortably covers several past years of billing history for the year
+// filter below — reads only cached rows (no Azure rate-limit cost), so
+// there's no reason to size this tightly to the current backfill window.
+const HISTORY_DAYS = 1500;
+
 function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId: string; monthlyBudget: number | null }) {
   const [history, setHistory] = useState<HistoryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [backfilling, setBackfilling] = useState(false);
   const [backfillNote, setBackfillNote] = useState('');
   const [backfillError, setBackfillError] = useState('');
+  const [selectedYear, setSelectedYear] = useState(() => String(new Date().getFullYear()));
 
   const reload = useCallback(() => {
     setLoading(true);
-    // 200 days covers ~6+ calendar months regardless of what span is picked
-    // in the chart above — this table isn't tied to that selector. Reads
-    // only cached SQLite rows, so there's no rate-limit cost to asking for more.
-    fetch(`/api/cost/history?subscription_id=${subscriptionId}&days=200`)
+    fetch(`/api/cost/history?subscription_id=${subscriptionId}&days=${HISTORY_DAYS}`)
       .then(r => r.json())
       .then(d => { if (!d.error) setHistory(d); setLoading(false); })
       .catch(() => setLoading(false));
@@ -453,7 +467,23 @@ function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId
         overBudget: monthlyBudget != null ? total - monthlyBudget : null,
       };
     });
+    // "vs previous" above is computed against the full, unfiltered month
+    // list (so January's comparison reaches back into December of the prior
+    // year) — the year filter below only narrows what's *displayed*.
   }, [history, monthlyBudget]);
+
+  // Every year that has at least one month of data, plus the current year
+  // even before any data exists for it, so the selector is never empty.
+  const years = useMemo(() => {
+    const set = new Set(months.map(m => m.key.slice(0, 4)));
+    set.add(String(new Date().getFullYear()));
+    return [...set].sort().reverse();
+  }, [months]);
+
+  const visibleMonths = useMemo(
+    () => months.filter(m => m.key.startsWith(selectedYear)),
+    [months, selectedYear]
+  );
 
   if (loading) return null;
   const currency = history?.currency ?? 'USD';
@@ -472,6 +502,12 @@ function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId
         <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
           Billing History
         </div>
+        <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} style={{
+          fontSize: 11, fontWeight: 700, background: 'var(--card)', border: '1px solid var(--border)',
+          color: 'var(--text)', borderRadius: 3, padding: '5px 8px', cursor: 'pointer',
+        }}>
+          {years.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
         <button onClick={runBackfill} disabled={backfilling} style={{
           marginLeft: 'auto', padding: '5px 12px', fontSize: 11, fontWeight: 700,
           background: 'transparent', border: `1px solid ${ACCENT}`, borderRadius: 3, color: ACCENT,
@@ -491,6 +527,10 @@ function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId
         <div style={{ padding: '8px 24px 28px', fontSize: 12, color: 'var(--muted)' }}>
           No billing history yet — either wait for the daily cost refresh to accumulate real days, or click Backfill above to pull actual past months from Azure Cost Management right now.
         </div>
+      ) : visibleMonths.length === 0 ? (
+        <div style={{ padding: '8px 24px 28px', fontSize: 12, color: 'var(--muted)' }}>
+          No billing history for {selectedYear}. Try a different year, or click Backfill above to pull more real months from Azure Cost Management.
+        </div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -503,7 +543,7 @@ function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId
               </tr>
             </thead>
             <tbody>
-              {months.map(m => (
+              {visibleMonths.map(m => (
                 <tr key={m.key} style={{ borderTop: `1px solid ${DIVIDER}` }}>
                   <td style={{ padding: '18px 24px', fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
                     {m.label}
@@ -534,12 +574,333 @@ function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId
   );
 }
 
+interface HetznerSpend {
+  totalMonthly: number; currency: string;
+  byCategory: Record<string, number>; byType: Record<string, { count: number; monthly_total: number }>;
+  unpriced?: string[];
+  fetchedAt: string; noData?: boolean; message?: string;
+  error?: string;
+}
+
+const UNPRICED_PREVIEW_COUNT = 3;
+
+interface HetznerHistoryPoint { day: string; total_monthly: number; currency: string; reconstructed: boolean }
+
+/** Run-rate over time — deliberately NOT "spend history".
+ *
+ * Azure's chart plots what was spent, and it moves as resources are consumed.
+ * This plots what the infrastructure costs per month as measured each day: it
+ * is flat while the fleet is unchanged and steps when a server or volume is
+ * added or removed. Labelling it "spend" would repeat exactly the
+ * billed-vs-estimated confusion the rest of this view works to avoid.
+ *
+ * It also cannot be backfilled — Hetzner exposes no spend history — so the
+ * line starts the day the first snapshot was taken and fills in from there.
+ * Below MIN_HISTORY_POINTS it shows the same honest placeholder the Azure
+ * chart uses rather than a near-empty chart that reads as broken. */
+function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string }) {
+  const [span, setSpan] = useState<number>(SPAN_OPTIONS[0].days);
+  const [points, setPoints] = useState<HetznerHistoryPoint[]>([]);
+  const [currency, setCurrency] = useState(fallbackCurrency);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillNote, setBackfillNote] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
+    fetch(`/api/cost/hetzner/history?days=${span}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d?.error) { setError(d.error); setLoading(false); return; }
+        setPoints(Array.isArray(d?.points) ? d.points : []);
+        if (d?.currency) setCurrency(d.currency);
+        setLoading(false);
+      })
+      .catch(e => { setError(String(e)); setLoading(false); });
+  }, [span]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function runBackfill() {
+    setBackfilling(true);
+    setBackfillNote('');
+    try {
+      const res = await fetch('/api/cost/hetzner/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: span }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error || 'Backfill failed');
+      setBackfillNote(`Reconstructed ${body.reconstructed} day(s) from resource creation dates.`);
+      load();
+    } catch (e) {
+      setBackfillNote(`⚠ ${(e as Error).message}`);
+    } finally {
+      setBackfilling(false);
+    }
+  }
+
+  const reconstructedCount = points.filter(p => p.reconstructed).length;
+
+  // Step change across the window — the meaningful delta for a run rate is
+  // "did the fleet get more expensive", not a sum of daily values.
+  const first = points[0]?.total_monthly;
+  const last = points[points.length - 1]?.total_monthly;
+  const delta = first && last && first > 0 ? ((last - first) / first) * 100 : null;
+
+  return (
+    <div className="glass" style={{ borderRadius: 10, padding: '18px 20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Run Rate History — monthly rate, as measured each day
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {SPAN_OPTIONS.map(opt => (
+            <button key={opt.days} onClick={() => setSpan(opt.days)} style={{
+              padding: '3px 10px', fontSize: 10, fontWeight: 700, borderRadius: 999, cursor: 'pointer',
+              background: span === opt.days ? ACCENT : 'transparent',
+              border: `1px solid ${span === opt.days ? ACCENT : 'var(--border)'}`,
+              color: span === opt.days ? '#fff' : 'var(--muted)',
+            }}>
+              {opt.label}
+            </button>
+          ))}
+          <button onClick={runBackfill} disabled={backfilling} style={{
+            padding: '3px 10px', fontSize: 10, fontWeight: 700, borderRadius: 999,
+            background: 'transparent', border: `1px solid ${ACCENT}`, color: ACCENT,
+            cursor: backfilling ? 'default' : 'pointer', opacity: backfilling ? 0.6 : 1,
+          }}>
+            {backfilling ? '⟳ Reconstructing…' : '↻ Reconstruct history'}
+          </button>
+        </div>
+      </div>
+
+      {backfillNote && (
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 12 }}>{backfillNote}</div>
+      )}
+
+      {/* The reconstructed-days caveat banner was removed at the owner's
+          request. The distinction still exists in the data — each point
+          carries `reconstructed`, and the API returns it — so it can be
+          surfaced again (as a quieter footnote, or per-point in the tooltip)
+          without any backend change. */}
+
+      {!loading && !error && last != null && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Current run rate</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 2 }}>
+            <span style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+              {last.toLocaleString(undefined, { style: 'currency', currency })}
+            </span>
+            {delta !== null && Math.abs(delta) >= 0.01 && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: delta >= 0 ? WARN : GOOD }}>
+                {delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)}% across this range
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {loading && <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 32 }}>Loading…</div>}
+      {!loading && error && <div style={{ fontSize: 12, color: CRIT, textAlign: 'center', padding: 32 }}>⚠ {error}</div>}
+
+      {!loading && !error && points.length < MIN_HISTORY_POINTS && (
+        <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--muted)', fontSize: 12 }}>
+          Accumulating run-rate history — check back in a few days.<br />
+          <span style={{ fontSize: 11 }}>
+            {points.length} day{points.length === 1 ? '' : 's'} recorded so far. Hetzner exposes no spend history, so this cannot be backfilled.
+          </span>
+        </div>
+      )}
+
+      {!loading && !error && points.length >= MIN_HISTORY_POINTS && (
+        <ResponsiveContainer width="100%" height={200}>
+          <AreaChart data={points} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+            <defs>
+              <linearGradient id="hetznerRunRateFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={ACCENT} stopOpacity={0.3} />
+                <stop offset="100%" stopColor={ACCENT} stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
+            <XAxis dataKey="day" tickFormatter={shortDate} tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false}
+              tickFormatter={v => v.toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: 0 })} />
+            <Tooltip
+              contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11 }}
+              labelFormatter={shortDate}
+              formatter={(v: number) => [v.toLocaleString(undefined, { style: 'currency', currency }), 'Run rate/mo']}
+            />
+            <Area type="stepAfter" dataKey="total_monthly" stroke={ACCENT} strokeWidth={2} fill="url(#hetznerRunRateFill)" dot={false} />
+          </AreaChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+function HetznerSpendView() {
+  const [data, setData] = useState<HetznerSpend | null>(null);
+  const [loading, setLoading] = useState(true);
+  // Distinct from `data === null` (still loading) and `data.noData` (a
+  // legitimate "no snapshot yet" state) — a fetch rejection or the route's
+  // own {error} 500 shape must render as a visible failure, not silently
+  // fall through to Object.entries(undefined) and crash the component.
+  const [fetchError, setFetchError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setFetchError('');
+    fetch('/api/cost/hetzner')
+      .then(r => r.json().then(d => ({ ok: r.ok, body: d })))
+      .then(({ ok, body }) => {
+        if (!ok || body?.error) {
+          setFetchError(body?.error || 'Failed to load Hetzner cost data.');
+          setData(null);
+        } else {
+          setData(body);
+        }
+        setLoading(false);
+      })
+      .catch(e => { setFetchError(String(e)); setLoading(false); });
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // The Hetzner refresh completes synchronously in-process (see
+  // /api/cost-requests's provider:'hetzner' branch) — no polling needed,
+  // unlike the Azure Refresh button which waits on a queued request.
+  async function requestRefresh() {
+    setRefreshing(true);
+    setRefreshError('');
+    try {
+      const res = await fetch('/api/cost-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'hetzner' }),
+      });
+      const body = await res.json();
+      if (!res.ok || body?.error) throw new Error(body?.error || 'Could not refresh Hetzner cost data');
+      load();
+    } catch (e) {
+      setRefreshError((e as Error).message);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  const refreshButton = (
+    <button onClick={requestRefresh} disabled={refreshing} style={{
+      padding: '5px 12px', fontSize: 11, fontWeight: 700,
+      background: 'transparent', border: `1px solid ${ACCENT}`, borderRadius: 3, color: ACCENT,
+      cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1,
+    }}>
+      {refreshing ? '⟳ Refreshing…' : '↻ Refresh'}
+    </button>
+  );
+
+  if (loading) return <div style={{ fontSize: 12, color: 'var(--muted)', padding: 32 }}>Loading…</div>;
+
+  if (fetchError) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ background: '#FF475718', border: '1px solid #FF475740', borderRadius: 6, padding: '10px 14px', fontSize: 12, color: CRIT }}>
+          ⚠ {fetchError}
+        </div>
+        {refreshError && (
+          <div style={{ background: '#FF475718', border: '1px solid #FF475740', borderRadius: 6, padding: '10px 14px', fontSize: 12, color: CRIT }}>
+            ⚠ {refreshError}
+          </div>
+        )}
+        <div>{refreshButton}</div>
+      </div>
+    );
+  }
+
+  if (!data || data.noData) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="glass" style={{ borderRadius: 8, padding: '24px 20px', textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
+          {data?.message ?? 'No Hetzner cost snapshot yet.'}
+        </div>
+        {refreshError && (
+          <div style={{ background: '#FF475718', border: '1px solid #FF475740', borderRadius: 6, padding: '10px 14px', fontSize: 12, color: CRIT }}>
+            ⚠ {refreshError}
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'center' }}>{refreshButton}</div>
+      </div>
+    );
+  }
+
+  const cat = Object.entries(data.byCategory).map(([name, cost]) => ({ name, cost }));
+  const types = Object.entries(data.byType).map(([name, v]) => ({ name: `${name} x${v.count}`, cost: v.monthly_total }));
+  // "By Server Type" rows only ever sum to the servers subtotal (volumes and
+  // primary IPs aren't server types) — using the grand total as the
+  // denominator here previously made every share read low and the column
+  // never reach 100%.
+  const serversSubtotal = data.byCategory.servers ?? 0;
+  const unpriced = data.unpriced ?? [];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>{refreshButton}</div>
+      {refreshError && (
+        <div style={{ background: '#FF475718', border: '1px solid #FF475740', borderRadius: 6, padding: '10px 14px', fontSize: 12, color: CRIT }}>
+          ⚠ {refreshError}
+        </div>
+      )}
+      <div className="glass" style={{ borderRadius: 10, padding: '22px 24px' }}>
+        <div style={{ fontSize: 44, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+          {data.totalMonthly.toLocaleString(undefined, { style: 'currency', currency: data.currency })}
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)', marginLeft: 8 }}>/month</span>
+        </div>
+        {/* The "not a bill" caveat banner was removed at the owner's request.
+            The API still returns `estimate: true` with this figure, and the
+            Claude analysis context still carries the qualifier in words, so
+            the distinction survives everywhere except this panel. */}
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+          Estimated from list prices
+        </div>
+        {unpriced.length > 0 && (
+          // Deliberately loud, not a tooltip: a pricing miss must never look
+          // like a legitimate $0 — the total above is understated by
+          // whatever these resources would have cost.
+          <div style={{
+            marginTop: 14, padding: '10px 14px', borderRadius: 6,
+            background: '#FF475718', border: '1px solid #FF475740', color: CRIT,
+            fontSize: 12, lineHeight: 1.5,
+          }}>
+            ⚠ {unpriced.length} resource{unpriced.length === 1 ? '' : 's'} could not be priced and {unpriced.length === 1 ? 'is' : 'are'} excluded from the total above — the true run rate is higher than shown.
+            <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+              {unpriced.slice(0, UNPRICED_PREVIEW_COUNT).map((u, i) => <li key={i}>{u}</li>)}
+              {unpriced.length > UNPRICED_PREVIEW_COUNT && (
+                <li>…and {unpriced.length - UNPRICED_PREVIEW_COUNT} more</li>
+              )}
+            </ul>
+          </div>
+        )}
+      </div>
+      <HetznerRunRateChart fallbackCurrency={data.currency} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <BreakdownCard title="By Category" rows={cat} total={data.totalMonthly} currency={data.currency} color={ACCENT} />
+        <BreakdownCard title="By Server Type" rows={types} total={serversSubtotal} currency={data.currency} color={WARN} />
+      </div>
+    </div>
+  );
+}
+
 function SpendView() {
   const [data, setData] = useState<SpendData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [statusNote, setStatusNote] = useState('');
   const [error, setError] = useState('');
+  const [provider, setProvider] = useState<'azure' | 'hetzner'>('azure');
 
   function load() {
     setLoading(true);
@@ -556,10 +917,12 @@ function SpendView() {
 
   useEffect(() => { load(); }, []);
 
-  /** This never calls Azure directly — it queues a request that a scheduled
-   * Claude Code routine picks up via the MCP server (cmd/mcp.go --http),
-   * same mechanism as the AI Assistant's Summarize button. See
-   * docs/ai-analysis-routine-setup.md. */
+  /** POST /api/cost-requests processes this synchronously, in the same
+   * request — it calls Azure Cost Management directly server-side, no MCP
+   * server or scheduled Claude Code routine involved (see that route's own
+   * comment). The polling loop below still exists because the endpoint
+   * returns 202 with a request id rather than the result inline, and as a
+   * safety net if a request is ever left pending for some other reason. */
   async function requestRefresh() {
     setRefreshing(true);
     setError('');
@@ -599,9 +962,24 @@ function SpendView() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', gap: 3, marginBottom: 12 }}>
+        {(['azure', 'hetzner'] as const).map(p => (
+          <button key={p} onClick={() => setProvider(p)} style={{
+            padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 3, cursor: 'pointer',
+            background: provider === p ? 'var(--accent)' : 'transparent',
+            border: `1px solid ${provider === p ? 'var(--accent)' : 'var(--border)'}`,
+            color: provider === p ? '#fff' : 'var(--muted)',
+          }}>
+            {p === 'azure' ? 'Azure' : 'Hetzner'}
+          </button>
+        ))}
+      </div>
+
+      {provider === 'azure' && (
+      <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-          {refreshing ? statusNote : data && !data.noData ? `Last refreshed: ${new Date(data.fetchedAt).toLocaleTimeString()} · Month-to-date` : ''}
+          {refreshing ? statusNote : data && !data.noData ? `Last refreshed: ${new Date(data.fetchedAt).toLocaleDateString()} ${new Date(data.fetchedAt).toLocaleTimeString()} · Month-to-date` : ''}
         </div>
         <button onClick={requestRefresh} disabled={loading || refreshing} style={{
           marginLeft: 'auto', padding: '5px 12px', fontSize: 11, fontWeight: 700,
@@ -681,7 +1059,7 @@ function SpendView() {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <BreakdownCard title="By Service" rows={data.byService} total={data.totalCost} currency={data.currency} color={ACCENT} />
-            <BreakdownCard title="By Resource Group" rows={data.byResourceGroup} total={data.totalCost} currency={data.currency} color={WARN} />
+            <BreakdownCard title="By Resource Group" rows={data.byResourceGroup.map(r => ({ ...r, name: resourceGroupLabel(r.name) }))} total={data.totalCost} currency={data.currency} color={WARN} />
           </div>
 
           <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>
@@ -690,6 +1068,10 @@ function SpendView() {
         </>
         );
       })()}
+      </>
+      )}
+
+      {provider === 'hetzner' && <HetznerSpendView />}
     </div>
   );
 }

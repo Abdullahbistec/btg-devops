@@ -1,29 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDB } from '@/lib/db';
+import { isAuthenticatedRequest } from '@/lib/auth';
+import { apiError } from '@/lib/api-error';
+import { parseBody, findingPatchSchema } from '@/lib/schemas';
+import { recordAuditLog } from '@/lib/audit-log';
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const { id } = await params;
   try {
     const db = await getDB();
-    const { rows } = await db.query('SELECT * FROM findings WHERE id = $1', [params.id]);
+    const { rows } = await db.query('SELECT * FROM findings WHERE id = $1', [id]);
     if (!rows[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     return NextResponse.json(rows[0]);
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'GET /api/findings/[id]');
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  if (!(await isAuthenticatedRequest(req))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const { id } = await params;
   try {
-    const body = await req.json().catch(() => ({}));
-    const { remediation_status } = body as { remediation_status?: string };
-    const allowed = ['open', 'acknowledged', 'resolved', 'suppressed'];
-    if (!remediation_status || !allowed.includes(remediation_status)) {
-      return NextResponse.json({ error: 'Invalid remediation_status' }, { status: 400 });
-    }
+    const parsed = await parseBody(req, findingPatchSchema);
+    if (!parsed.ok) return parsed.response;
+    const { remediation_status, support_ticket_ref } = parsed.data;
+
     const db = await getDB();
-    await db.query(`UPDATE findings SET remediation_status = $1 WHERE id = $2`, [remediation_status, params.id]);
+    if (remediation_status !== undefined) {
+      await db.query(`UPDATE findings SET remediation_status = $1 WHERE id = $2`, [remediation_status, id]);
+    }
+    if (support_ticket_ref !== undefined) {
+      await db.query(`UPDATE findings SET support_ticket_ref = $1 WHERE id = $2`, [support_ticket_ref, id]);
+    }
+    await recordAuditLog(req, 'finding.update', { id, remediation_status, support_ticket_ref });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return apiError(e, 'PATCH /api/findings/[id]');
   }
 }
