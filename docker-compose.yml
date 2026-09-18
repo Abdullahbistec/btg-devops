@@ -13,6 +13,7 @@ services:
     restart: always
     ports:
       - "3000:3000"
+      - "8090:8090"
     env_file:
       - web/.env.local
     environment:
@@ -27,3 +28,16 @@ services:
       # credentials into a server container — a decision for whoever owns
       # that account, not a default).
       - CLAUDE_DRAIN_ENABLED=0
+      # Overrides web/.env.local's BTG_DEVOPS_PATH=../btg-devops.exe, which is
+      # only correct for the Windows host this repo is developed on. The
+      # Dockerfile's `go build` runs with no GOOS override, producing a
+      # plain `btg-devops` binary (no .exe) at /app/btg-devops -- inheriting
+      # the Windows path here via env_file made every `analyze` command AND
+      # the auto-started MCP server (web/lib/mcp-runner.ts) fail with ENOENT
+      # inside the container, since /app/btg-devops.exe never exists.
+      - BTG_DEVOPS_PATH=../btg-devops
+      # The MCP server needs to be reachable from outside the container for
+      # an external Claude Code session (with the real CLI + credentials,
+      # per docs/docker-claude-drain.md) to drain the queue -- 3000:3000
+      # alone only exposes the dashboard.
+      - MCP_ADDR=:8090

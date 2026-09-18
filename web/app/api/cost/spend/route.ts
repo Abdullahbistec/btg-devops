@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
     const subParam = url.searchParams.get('subscription_id');
     const db = await getDB();
 
-    const activeRes = await db.query("SELECT id FROM subscriptions WHERE is_active = 1 ORDER BY created_at LIMIT 1");
+    const activeRes = await db.query("SELECT id FROM subscriptions WHERE is_active = true ORDER BY created_at LIMIT 1");
     const resolvedSubId = subParam || (activeRes.rows[0] as { id: string } | undefined)?.id || '';
     const sub = await getSubscription(resolvedSubId);
     if (!sub) {
@@ -40,8 +40,8 @@ export async function GET(req: NextRequest) {
       timeframe: 'MonthToDate',
       totalCost: snapshot.total_cost,
       currency: snapshot.currency,
-      byService: JSON.parse(snapshot.by_service),
-      byResourceGroup: JSON.parse(snapshot.by_resource_group),
+      byService: snapshot.by_service,
+      byResourceGroup: snapshot.by_resource_group,
       fetchedAt: snapshot.fetched_at,
       monthlyBudget: sub.monthly_budget,
     });

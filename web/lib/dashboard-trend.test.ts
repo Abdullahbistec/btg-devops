@@ -22,7 +22,7 @@ async function seedAudits(count: number) {
   await db.query('DELETE FROM subscriptions');
   await db.query(
     `INSERT INTO subscriptions (id, name, subscription_id, tenant_id, client_id, is_active)
-     VALUES ($1, 'Test Sub', 'sub-guid', 'tenant-guid', 'client-guid', 1)`,
+     VALUES ($1, 'Test Sub', 'sub-guid', 'tenant-guid', 'client-guid', true)`,
     [SUB]
   );
 

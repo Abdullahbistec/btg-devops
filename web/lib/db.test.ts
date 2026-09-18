@@ -215,7 +215,7 @@ describe('saveCostSnapshot — history', () => {
     expect(history).toHaveLength(1);
     expect(Number(history[0].total_cost)).toBe(100);
     expect(history[0].currency).toBe('USD');
-    expect(JSON.parse(history[0].by_service)).toEqual([{ name: 'Virtual Machines', cost: 60 }, { name: 'Storage', cost: 40 }]);
+    expect(history[0].by_service).toEqual([{ name: 'Virtual Machines', cost: 60 }, { name: 'Storage', cost: 40 }]);
     expect(history[0].snapshot_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
@@ -247,7 +247,7 @@ describe('saveCostSnapshot — history', () => {
     // out for days=3) and one today, to test both ordering and the day filter.
     await db.query(`
       INSERT INTO cost_snapshot_history (subscription_id, snapshot_date, total_cost, currency, by_service, fetched_at)
-      VALUES ('sub-1', to_char(now() - interval '5 days', 'YYYY-MM-DD'), 80, 'USD', '[]', to_char(now() - interval '5 days', 'YYYY-MM-DD HH24:MI:SS'))
+      VALUES ('sub-1', to_char(now() - interval '5 days', 'YYYY-MM-DD'), 80, 'USD', '[]', now() - interval '5 days')
     `);
     await saveCostSnapshot('sub-1', { totalCost: 120, currency: 'USD', byService: [{ name: 'VMs', cost: 120 }], byResourceGroup: [] });
 
@@ -295,8 +295,8 @@ describe('getStaleRunningAudits', () => {
     await db.query(`
       INSERT INTO audits (id, subscription_id, name, status, started_at)
       VALUES
-        ('audit-old', 'sub-1', 'Orphaned Audit', 'running', to_char(now() - interval '20 hours', 'YYYY-MM-DD HH24:MI:SS')),
-        ('audit-new', 'sub-1', 'Fresh Audit', 'running', to_char(now() - interval '5 minutes', 'YYYY-MM-DD HH24:MI:SS'))
+        ('audit-old', 'sub-1', 'Orphaned Audit', 'running', now() - interval '20 hours'),
+        ('audit-new', 'sub-1', 'Fresh Audit', 'running', now() - interval '5 minutes')
     `);
 
     const stale = await getStaleRunningAudits(12);
@@ -307,7 +307,7 @@ describe('getStaleRunningAudits', () => {
     const db = await getDB();
     await db.query(`
       INSERT INTO audits (id, subscription_id, name, status, started_at)
-      VALUES ('audit-done', 'sub-1', 'Old Completed Audit', 'completed', to_char(now() - interval '20 hours', 'YYYY-MM-DD HH24:MI:SS'))
+      VALUES ('audit-done', 'sub-1', 'Old Completed Audit', 'completed', now() - interval '20 hours')
     `);
 
     const stale = await getStaleRunningAudits(12);
@@ -517,7 +517,7 @@ describe('hetzner cost snapshots', () => {
     const snap = await getHetznerCostSnapshot();
     expect(snap?.total_monthly).toBeCloseTo(246.89, 2);
     expect(snap?.currency).toBe('USD');
-    expect(JSON.parse(snap!.by_category).servers).toBeCloseTo(213.35, 2);
+    expect(snap!.by_category.servers).toBeCloseTo(213.35, 2);
   });
 
   it('round-trips a non-empty unpriced list so a pricing gap stays visible', async () => {
@@ -533,7 +533,7 @@ describe('hetzner cost snapshots', () => {
     });
 
     const snap = await getHetznerCostSnapshot();
-    const unpriced = JSON.parse(snap!.unpriced);
+    const unpriced = snap!.unpriced;
     expect(unpriced).toEqual(['server web-1 (type unknown-type)', 'primary ip pip-1 (type ipv4)']);
   });
 
@@ -547,6 +547,6 @@ describe('hetzner cost snapshots', () => {
     });
 
     const snap = await getHetznerCostSnapshot();
-    expect(JSON.parse(snap!.unpriced)).toEqual([]);
+    expect(snap!.unpriced).toEqual([]);
   });
 });
