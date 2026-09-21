@@ -68,6 +68,69 @@ export interface HetznerCostHistoryPoint {
   total_monthly: number;
   currency: string;
   reconstructed: boolean;
+  by_category: Record<string, number>;
+  by_type: Record<string, { count: number; monthly_total: number }>;
+}
+
+export interface HetznerCostChangeEvent {
+  day: string;
+  description: string;
+  delta: number;
+  new_rate: number;
+}
+
+/** Classifies the change between two consecutive daily points from what
+ * moved in by_category/by_type, rather than just reporting the $ delta.
+ * Reconstructed points carry no by_category/by_type detail (they're derived
+ * from creation dates, not observed — see saveHetznerReconstructedHistory),
+ * so a transition touching one falls back to a direction-only label instead
+ * of guessing at detail that was never captured. */
+function classifyHetznerChange(
+  prev: HetznerCostHistoryPoint,
+  cur: HetznerCostHistoryPoint
+): string {
+  const prevCat = prev.by_category || {};
+  const curCat = cur.by_category || {};
+  const hasDetail = Object.keys(prevCat).length > 0 || Object.keys(curCat).length > 0;
+  if (!hasDetail) {
+    return cur.total_monthly > prev.total_monthly ? 'Resource added' : 'Resource removed';
+  }
+
+  const catKeys = new Set([...Object.keys(prevCat), ...Object.keys(curCat)]);
+  const changedCats = [...catKeys].filter(k => (prevCat[k] ?? 0) !== (curCat[k] ?? 0));
+
+  if (changedCats.length === 1 && changedCats[0] === 'volumes') {
+    return (curCat.volumes ?? 0) > (prevCat.volumes ?? 0) ? 'Volume attached' : 'Volume detached';
+  }
+  if (changedCats.length === 1 && changedCats[0] === 'primary_ips') {
+    return (curCat.primary_ips ?? 0) > (prevCat.primary_ips ?? 0) ? 'IP address added' : 'IP address removed';
+  }
+  if (changedCats.includes('servers')) {
+    const prevCount = Object.values(prev.by_type || {}).reduce((s, t) => s + t.count, 0);
+    const curCount = Object.values(cur.by_type || {}).reduce((s, t) => s + t.count, 0);
+    if (curCount > prevCount) return 'Server added';
+    if (curCount < prevCount) return 'Server removed';
+    // Same server count, different composition or price — a rescale to a
+    // different type is the only way that happens without a count change.
+    return cur.total_monthly > prev.total_monthly ? 'Server rescaled up' : 'Server rescaled down';
+  }
+  return cur.total_monthly > prev.total_monthly ? 'Rate increased' : 'Rate decreased';
+}
+
+/** Turns a day-ordered points array into one event per day whose run rate
+ * actually moved from the day before — consecutive identical days produce no
+ * event, matching the "meaningful delta" convention already used for the
+ * range-wide change figure. First point never emits (nothing to compare
+ * against). Newest first, matching how a change log reads. */
+export function buildHetznerChangeEvents(points: HetznerCostHistoryPoint[]): HetznerCostChangeEvent[] {
+  const events: HetznerCostChangeEvent[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1], cur = points[i];
+    const delta = cur.total_monthly - prev.total_monthly;
+    if (Math.abs(delta) < 0.005) continue;
+    events.push({ day: cur.day, description: classifyHetznerChange(prev, cur), delta, new_rate: cur.total_monthly });
+  }
+  return events.reverse();
 }
 
 /** Whether a MEASURED Hetzner snapshot exists for today (UTC).
@@ -144,7 +207,9 @@ export async function getHetznerCostHistory(days: number): Promise<HetznerCostHi
        to_char((fetched_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS day,
        total_monthly,
        currency,
-       COALESCE(reconstructed, false) AS reconstructed
+       COALESCE(reconstructed, false) AS reconstructed,
+       COALESCE(by_category, '{}'::jsonb) AS by_category,
+       COALESCE(by_type, '{}'::jsonb) AS by_type
      FROM hetzner_cost_snapshots
      WHERE fetched_at >= now() - ($1 || ' days')::interval
      ORDER BY (fetched_at AT TIME ZONE 'UTC')::date ASC, fetched_at DESC`,

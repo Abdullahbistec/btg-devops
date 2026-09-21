@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getHetznerCostHistory } from '@/lib/db';
+import { getHetznerCostHistory, buildHetznerChangeEvents } from '@/lib/db';
 import { isAuthenticatedRequest } from '@/lib/auth';
 import { apiError } from '@/lib/api-error';
 
@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
     const points = await getHetznerCostHistory(days);
     return NextResponse.json({
       points,
+      events: buildHetznerChangeEvents(points),
       currency: points[points.length - 1]?.currency ?? 'USD',
       runRate: true,
       estimate: true,

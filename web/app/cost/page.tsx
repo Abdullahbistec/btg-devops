@@ -84,6 +84,10 @@ function shortDate(iso: string) {
   return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+function weekdayDate(iso: string) {
+  return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 function monthLabel(iso: string) {
   return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'long' });
 }
@@ -585,6 +589,7 @@ interface HetznerSpend {
 const UNPRICED_PREVIEW_COUNT = 3;
 
 interface HetznerHistoryPoint { day: string; total_monthly: number; currency: string; reconstructed: boolean }
+interface HetznerChangeEvent { day: string; description: string; delta: number; new_rate: number }
 
 /** Run-rate over time — deliberately NOT "spend history".
  *
@@ -601,6 +606,7 @@ interface HetznerHistoryPoint { day: string; total_monthly: number; currency: st
 function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string }) {
   const [span, setSpan] = useState<number>(SPAN_OPTIONS[0].days);
   const [points, setPoints] = useState<HetznerHistoryPoint[]>([]);
+  const [events, setEvents] = useState<HetznerChangeEvent[]>([]);
   const [currency, setCurrency] = useState(fallbackCurrency);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -615,6 +621,7 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
       .then(d => {
         if (d?.error) { setError(d.error); setLoading(false); return; }
         setPoints(Array.isArray(d?.points) ? d.points : []);
+        setEvents(Array.isArray(d?.events) ? d.events : []);
         if (d?.currency) setCurrency(d.currency);
         setLoading(false);
       })
@@ -649,6 +656,7 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
   // "did the fleet get more expensive", not a sum of daily values.
   const first = points[0]?.total_monthly;
   const last = points[points.length - 1]?.total_monthly;
+  const deltaAbs = first != null && last != null ? last - first : null;
   const delta = first && last && first > 0 ? ((last - first) / first) * 100 : null;
 
   // This is a step function (flat until a server/volume/IP is added or
@@ -664,7 +672,14 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
 
   function ChangeDot(props: { cx?: number; cy?: number; index?: number }) {
     const { cx, cy, index } = props;
-    if (cx == null || cy == null || index == null || index === 0) return null;
+    if (cx == null || cy == null || index == null) return null;
+    // The most recent point is always marked, in a neutral color, as "this
+    // is now" — distinct from the orange/green dots that mark which earlier
+    // days actually moved the rate.
+    if (index === points.length - 1) {
+      return <circle cx={cx} cy={cy} r={4.5} fill={ACCENT} stroke="var(--card)" strokeWidth={1.5} />;
+    }
+    if (index === 0) return null;
     const prev = points[index - 1];
     const cur = points[index];
     if (!prev || !cur || prev.total_monthly === cur.total_monthly) return null;
@@ -710,17 +725,36 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
           without any backend change. */}
 
       {!loading && !error && last != null && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Current run rate</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 2 }}>
-            <span style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 16, marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Current run rate</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
               {last.toLocaleString(undefined, { style: 'currency', currency })}
-            </span>
-            {delta !== null && Math.abs(delta) >= 0.01 && (
-              <span style={{ fontSize: 11, fontWeight: 700, color: delta >= 0 ? WARN : GOOD }}>
-                {delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)}% across this range
-              </span>
-            )}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Change across range</div>
+            <div style={{ marginTop: 2 }}>
+              {delta !== null && Math.abs(delta) >= 0.01 ? (
+                <span style={{ fontSize: 15, fontWeight: 700, color: delta >= 0 ? WARN : GOOD }}>
+                  {delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(2)}% ({deltaAbs != null && deltaAbs >= 0 ? '+' : ''}{deltaAbs?.toLocaleString(undefined, { style: 'currency', currency })})
+                </span>
+              ) : (
+                <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--muted)' }}>No change</span>
+              )}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Range low / high</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
+              {minVal.toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: 2 })} – {maxVal.toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Changes in range</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
+              {events.length}
+            </div>
           </div>
         </div>
       )}
@@ -757,6 +791,48 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
             <Area type="stepAfter" dataKey="total_monthly" stroke={ACCENT} strokeWidth={2} fill="url(#hetznerRunRateFill)" dot={<ChangeDot />} />
           </AreaChart>
         </ResponsiveContainer>
+      )}
+
+      {!loading && !error && points.length >= MIN_HISTORY_POINTS && (
+        <div style={{ display: 'flex', gap: 16, marginTop: 10, fontSize: 10.5, color: 'var(--muted)' }}>
+          <span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: WARN, marginRight: 5 }} />Rate increased</span>
+          <span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: GOOD, marginRight: 5 }} />Rate decreased</span>
+          <span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: ACCENT, marginRight: 5 }} />Current</span>
+        </div>
+      )}
+
+      {!loading && !error && events.length > 0 && (
+        <div style={{ marginTop: 18 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+            What changed
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ textAlign: 'left', color: 'var(--muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <th style={{ padding: '4px 8px 4px 0', fontWeight: 600 }}>Date</th>
+                  <th style={{ padding: '4px 8px', fontWeight: 600 }}>What changed</th>
+                  <th style={{ padding: '4px 8px', fontWeight: 600, textAlign: 'right' }}>Delta</th>
+                  <th style={{ padding: '4px 0 4px 8px', fontWeight: 600, textAlign: 'right' }}>New run rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((ev, i) => (
+                  <tr key={`${ev.day}-${i}`} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '7px 8px 7px 0', color: 'var(--text)', whiteSpace: 'nowrap' }}>{weekdayDate(ev.day)}</td>
+                    <td style={{ padding: '7px 8px', color: 'var(--text)' }}>{ev.description}</td>
+                    <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: ev.delta >= 0 ? WARN : GOOD, whiteSpace: 'nowrap' }}>
+                      {ev.delta >= 0 ? '+' : ''}{ev.delta.toLocaleString(undefined, { style: 'currency', currency })}
+                    </td>
+                    <td style={{ padding: '7px 0 7px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--text)', whiteSpace: 'nowrap' }}>
+                      {ev.new_rate.toLocaleString(undefined, { style: 'currency', currency })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </div>
   );
