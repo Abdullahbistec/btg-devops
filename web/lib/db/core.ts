@@ -286,6 +286,7 @@ async function initSchema(pool: Pool): Promise<void> {
       by_category   TEXT NOT NULL,
       by_type       TEXT NOT NULL,
       unpriced      TEXT DEFAULT '[]',
+      resources     JSONB DEFAULT '[]'::jsonb,
       fetched_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
@@ -326,6 +327,7 @@ async function initSchema(pool: Pool): Promise<void> {
 
     ALTER TABLE hetzner_cost_snapshots ADD COLUMN IF NOT EXISTS unpriced TEXT DEFAULT '[]';
     ALTER TABLE hetzner_cost_snapshots ADD COLUMN IF NOT EXISTS reconstructed BOOLEAN DEFAULT false;
+    ALTER TABLE hetzner_cost_snapshots ADD COLUMN IF NOT EXISTS resources JSONB DEFAULT '[]'::jsonb;
   `);
 
   // Seed default subscription from env vars if the table is empty — same

@@ -48,6 +48,16 @@ export async function saveCostSnapshot(subscriptionId: string, data: { totalCost
   }
 }
 
+export interface HetznerCostResourceLine {
+  name: string;
+  type: string;
+  location: string;
+  count: number;
+  unit: string;
+  unit_price: number;
+  monthly: number;
+}
+
 export interface HetznerCostSnapshot {
   id: string;
   total_monthly: number;
@@ -55,6 +65,7 @@ export interface HetznerCostSnapshot {
   by_category: Record<string, number>; // JSON-encoded { [category]: number }
   by_type: Record<string, { count: number; monthly_total: number }>;      // JSON-encoded { [serverType]: { count, monthly_total } }
   unpriced: string[];     // JSON-encoded string[] — resources whose price lookup failed
+  resources: HetznerCostResourceLine[]; // per-resource detail behind by_category/by_type
   fetched_at: string;
 }
 
@@ -218,12 +229,12 @@ export async function getHetznerCostHistory(days: number): Promise<HetznerCostHi
   return rows;
 }
 
-export async function saveHetznerCostSnapshot(data: { totalMonthly: number; currency: string; byCategory: unknown; byType: unknown; unpriced?: unknown }): Promise<void> {
+export async function saveHetznerCostSnapshot(data: { totalMonthly: number; currency: string; byCategory: unknown; byType: unknown; unpriced?: unknown; resources?: unknown }): Promise<void> {
   const db = await getDB();
   await db.query(
-    `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, fetched_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-    [randomUUID(), data.totalMonthly, data.currency, JSON.stringify(data.byCategory), JSON.stringify(data.byType), JSON.stringify(data.unpriced ?? [])]
+    `INSERT INTO hetzner_cost_snapshots (id, total_monthly, currency, by_category, by_type, unpriced, resources, fetched_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+    [randomUUID(), data.totalMonthly, data.currency, JSON.stringify(data.byCategory), JSON.stringify(data.byType), JSON.stringify(data.unpriced ?? []), JSON.stringify(data.resources ?? [])]
   );
 }
 

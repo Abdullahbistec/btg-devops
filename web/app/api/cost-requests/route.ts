@@ -66,6 +66,7 @@ export async function POST(req: NextRequest) {
           byCategory: report.byCategory,
           byType: report.byType,
           unpriced: report.unpriced,
+          resources: report.resources,
         });
         // Same {id, status} shape as the Azure branch below, even though this
         // id is synthetic (nothing is queued in cost_fetch_requests for

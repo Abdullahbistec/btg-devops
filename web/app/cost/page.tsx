@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { Fragment, useEffect, useState, useMemo, useCallback } from 'react';
 import Sidebar from '@/components/Sidebar';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
 import { resourceGroupLabel } from '@/lib/cost-labels';
@@ -578,15 +578,22 @@ function BillingHistoryTable({ subscriptionId, monthlyBudget }: { subscriptionId
   );
 }
 
+interface HetznerResourceLine {
+  name: string; type: string; location: string;
+  count: number; unit: string; unit_price: number; monthly: number;
+}
+
 interface HetznerSpend {
   totalMonthly: number; currency: string;
   byCategory: Record<string, number>; byType: Record<string, { count: number; monthly_total: number }>;
   unpriced?: string[];
+  resources?: HetznerResourceLine[];
   fetchedAt: string; noData?: boolean; message?: string;
   error?: string;
 }
 
 const UNPRICED_PREVIEW_COUNT = 3;
+const HETZNER_MONTHLY_HOURS = 624;
 
 interface HetznerHistoryPoint { day: string; total_monthly: number; currency: string; reconstructed: boolean }
 interface HetznerChangeEvent { day: string; description: string; delta: number; new_rate: number }
@@ -952,9 +959,14 @@ function HetznerSpendView() {
         </div>
       )}
       <div className="glass" style={{ borderRadius: 10, padding: '22px 24px' }}>
-        <div style={{ fontSize: 44, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
-          {data.totalMonthly.toLocaleString(undefined, { style: 'currency', currency: data.currency })}
-          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)', marginLeft: 8 }}>/month</span>
+        <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ fontSize: 44, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+            {data.totalMonthly.toLocaleString(undefined, { style: 'currency', currency: data.currency })}
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)', marginLeft: 8 }}>/month</span>
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>
+            ≈ {(data.totalMonthly / HETZNER_MONTHLY_HOURS).toLocaleString(undefined, { style: 'currency', currency: data.currency, maximumFractionDigits: 4 })}/hour
+          </div>
         </div>
         <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
           Estimated from list prices
@@ -996,6 +1008,101 @@ function HetznerSpendView() {
         <BreakdownCard title="By Category" rows={cat} total={data.totalMonthly} currency={data.currency} color={ACCENT} />
         <BreakdownCard title="By Server Type" rows={types} total={serversSubtotal} currency={data.currency} color={WARN} />
       </div>
+      {data.resources && data.resources.length > 0 && (
+        <HetznerReconciliationTable resources={data.resources} currency={data.currency} total={data.totalMonthly} />
+      )}
+      <HetznerBillingFacts currency={data.currency} />
+    </div>
+  );
+}
+
+/** Every priced resource, its own unit price, its own monthly cost — the
+ * detail behind the By Category / By Server Type rollups above. Exists so a
+ * reader can check the headline figure foots up from real resources instead
+ * of taking the total on faith. */
+function HetznerReconciliationTable({ resources, currency, total }: { resources: HetznerResourceLine[]; currency: string; total: number }) {
+  const grouped: Record<string, HetznerResourceLine[]> = { 'Cloud servers': [], 'Network': [], 'Storage': [] };
+  for (const r of resources) {
+    if (r.type === 'volume') grouped.Storage.push(r);
+    else if (r.type.startsWith('ipv')) grouped.Network.push(r);
+    else grouped['Cloud servers'].push(r);
+  }
+  return (
+    <div className="glass" style={{ borderRadius: 10, padding: '18px 20px' }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>
+        How the figure is built
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 12 }}>Every resource in the project, at its list price.</div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead>
+            <tr style={{ textAlign: 'left', color: 'var(--muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              <th style={{ padding: '4px 8px 4px 0', fontWeight: 600 }}>Resource</th>
+              <th style={{ padding: '4px 8px', fontWeight: 600 }}>Type</th>
+              <th style={{ padding: '4px 8px', fontWeight: 600 }}>Location</th>
+              <th style={{ padding: '4px 8px', fontWeight: 600, textAlign: 'right' }}>Count</th>
+              <th style={{ padding: '4px 8px', fontWeight: 600, textAlign: 'right' }}>Unit price</th>
+              <th style={{ padding: '4px 0 4px 8px', fontWeight: 600, textAlign: 'right' }}>{currency} / month</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(grouped).filter(([, rows]) => rows.length > 0).map(([group, rows]) => (
+              <Fragment key={group}>
+                <tr>
+                  <td colSpan={6} style={{ padding: '8px 8px 4px 0', fontSize: 11, fontWeight: 700, color: 'var(--muted)' }}>{group}</td>
+                </tr>
+                {rows.map((r, i) => (
+                  <tr key={`${r.name}-${i}`} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '6px 8px 6px 0', color: 'var(--text)' }}>{r.name}</td>
+                    <td style={{ padding: '6px 8px', color: 'var(--muted)' }}>{r.type}</td>
+                    <td style={{ padding: '6px 8px', color: 'var(--muted)' }}>{r.location}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.count}{r.unit === 'GB' ? ' GB' : ''}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--muted)' }}>
+                      {r.unit_price.toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: r.unit_price < 1 ? 4 : 2 })}{r.unit === 'GB' ? '/GB' : '/mo'}
+                    </td>
+                    <td style={{ padding: '6px 0 6px 8px', textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                      {r.monthly.toLocaleString(undefined, { style: 'currency', currency })}
+                    </td>
+                  </tr>
+                ))}
+              </Fragment>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colSpan={5} style={{ padding: '10px 8px 0 0', fontWeight: 700, borderTop: '2px solid var(--border)' }}>Monthly run rate</td>
+              <td style={{ padding: '10px 0 0 8px', textAlign: 'right', fontWeight: 700, color: ACCENT, borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>
+                {total.toLocaleString(undefined, { style: 'currency', currency })}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function HetznerBillingFacts({ currency }: { currency: string }) {
+  const qa: [string, string][] = [
+    ['Which dollar?', `${currency} — read straight from Hetzner's own Cloud API pricing response for this account. Hetzner bills only in EUR or USD; it never bills in AUD.`],
+    ['Monthly or daily?', 'Monthly. The chart above re-prices that same monthly figure for each past day — it is not a daily spend total.'],
+    ['Where does the number come from?', "Hetzner's live pricing endpoint, multiplied by the resources actually in this account, summed — the same figure the reconciliation table above foots to."],
+    ['When does Hetzner actually charge?', 'Hourly, rounded up, capped at 624 hours per month, invoiced monthly in arrears.'],
+    ['Will the invoice match this?', 'It will usually be lower — anything created mid-month is billed only from its creation hour, and Hetzner exposes no invoice endpoint this tool can check against.'],
+  ];
+  return (
+    <div className="glass" style={{ borderRadius: 10, padding: '18px 20px' }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+        Billing facts
+      </div>
+      <dl style={{ margin: 0 }}>
+        {qa.map(([q, a]) => (
+          <div key={q} style={{ marginTop: 10 }}>
+            <dt style={{ fontSize: 12.5, color: 'var(--muted)' }}>{q}</dt>
+            <dd style={{ margin: '2px 0 0', fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>{a}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }

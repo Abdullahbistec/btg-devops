@@ -21,6 +21,21 @@ type HetznerCostLine struct {
 	MonthlyTotal float64 `json:"monthly_total"`
 }
 
+// HetznerCostResourceLine is one priced resource — the detail behind the
+// ByCategory/ByType rollups, kept so a caller can show a full reconciliation
+// (every resource, its own unit price, its own monthly cost) rather than
+// only aggregate totals. Count/Unit vary by kind: a server or primary IP is
+// Count 1, Unit "mo"; a volume is Count <size in GB>, Unit "GB".
+type HetznerCostResourceLine struct {
+	Name      string  `json:"name"`
+	Type      string  `json:"type"`
+	Location  string  `json:"location"`
+	Count     float64 `json:"count"`
+	Unit      string  `json:"unit"`
+	UnitPrice float64 `json:"unit_price"`
+	Monthly   float64 `json:"monthly"`
+}
+
 // HetznerCostReport is a list-price estimate of the monthly Hetzner run
 // rate, built from live pricing data plus the account's actual resources.
 //
@@ -38,6 +53,7 @@ type HetznerCostReport struct {
 	Estimate     bool                       `json:"estimate"`
 	Note         string                     `json:"note"`
 	History      []HetznerCostHistoryPoint `json:"history,omitempty"`
+	Resources    []HetznerCostResourceLine `json:"resources,omitempty"`
 }
 
 // Hetzner Cloud API types (GET /primary_ips)
@@ -86,6 +102,10 @@ func hetznerCostReport(servers []hetznerServer, volumes []hetznerVolume, ips []h
 		line.Count++
 		line.MonthlyTotal += cost
 		r.ByType[s.ServerType.Name] = line
+		r.Resources = append(r.Resources, HetznerCostResourceLine{
+			Name: s.Name, Type: s.ServerType.Name, Location: s.Datacenter.Location.Name,
+			Count: 1, Unit: "mo", UnitPrice: cost, Monthly: cost,
+		})
 	}
 
 	if len(volumes) > 0 {
@@ -97,7 +117,12 @@ func hetznerCostReport(servers []hetznerServer, volumes []hetznerVolume, ips []h
 			r.Unpriced = append(r.Unpriced, fmt.Sprintf("%d volumes (no volume price in payload)", len(volumes)))
 		} else {
 			for _, v := range volumes {
-				r.ByCategory["volumes"] += float64(v.Size) * perGB
+				monthly := float64(v.Size) * perGB
+				r.ByCategory["volumes"] += monthly
+				r.Resources = append(r.Resources, HetznerCostResourceLine{
+					Name: v.Name, Type: "volume", Location: "—",
+					Count: float64(v.Size), Unit: "GB", UnitPrice: perGB, Monthly: monthly,
+				})
 			}
 		}
 	}
@@ -117,6 +142,10 @@ func hetznerCostReport(servers []hetznerServer, volumes []hetznerVolume, ips []h
 			continue
 		}
 		r.ByCategory["primary_ips"] += cost
+		r.Resources = append(r.Resources, HetznerCostResourceLine{
+			Name: ip.Name, Type: ip.Type, Location: ip.Datacenter.Location.Name,
+			Count: 1, Unit: "mo", UnitPrice: cost, Monthly: cost,
+		})
 	}
 
 	for _, v := range r.ByCategory {

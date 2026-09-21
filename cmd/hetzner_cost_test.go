@@ -34,6 +34,50 @@ func TestHetznerCostReport_TotalsByCategory(t *testing.T) {
 	}
 }
 
+func TestHetznerCostReport_ResourcesCarryPerLineDetail(t *testing.T) {
+	p := loadPricingFixture(t)
+	servers := []hetznerServer{
+		{Name: "a", ServerType: hetznerServerType{Name: "cpx11"}, Datacenter: hetznerDatacenter{Location: hetznerLocation{Name: "fsn1"}}},
+	}
+	volumes := []hetznerVolume{{Name: "v1", Size: 100}}
+	ips := []hetznerPrimaryIP{{Name: "ip1", Type: "ipv4", Datacenter: hetznerDatacenter{Location: hetznerLocation{Name: "fsn1"}}}}
+
+	r := hetznerCostReport(servers, volumes, ips, p)
+
+	if len(r.Resources) != 3 {
+		t.Fatalf("len(Resources) = %d, want 3 (server, volume, ip)", len(r.Resources))
+	}
+	var server, volume, ip *HetznerCostResourceLine
+	for i := range r.Resources {
+		switch r.Resources[i].Name {
+		case "a":
+			server = &r.Resources[i]
+		case "v1":
+			volume = &r.Resources[i]
+		case "ip1":
+			ip = &r.Resources[i]
+		}
+	}
+	if server == nil || server.Type != "cpx11" || server.Monthly <= 0 {
+		t.Errorf("server resource line = %+v, want type cpx11 with positive Monthly", server)
+	}
+	if volume == nil || volume.Unit != "GB" || volume.Count != 100 || volume.Monthly <= 0 {
+		t.Errorf("volume resource line = %+v, want Unit GB, Count 100, positive Monthly", volume)
+	}
+	if ip == nil || ip.Monthly <= 0 {
+		t.Errorf("ip resource line = %+v, want positive Monthly", ip)
+	}
+	// Every line's own Monthly must sum to the report total — the
+	// reconciliation table is only trustworthy if it foots to the headline.
+	var sum float64
+	for _, res := range r.Resources {
+		sum += res.Monthly
+	}
+	if diff := sum - r.TotalMonthly; diff > 0.01 || diff < -0.01 {
+		t.Errorf("sum(Resources.Monthly) = %v, want %v (TotalMonthly)", sum, r.TotalMonthly)
+	}
+}
+
 func TestHetznerCostReport_RecordsUnpricedResources(t *testing.T) {
 	p := loadPricingFixture(t)
 	servers := []hetznerServer{{Name: "mystery", ServerType: hetznerServerType{Name: "made-up"}}}

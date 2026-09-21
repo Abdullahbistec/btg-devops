@@ -273,6 +273,16 @@ export async function runSingleCommand(
   };
 }
 
+export interface HetznerCostResourceLine {
+  name: string;
+  type: string;
+  location: string;
+  count: number;
+  unit: string;
+  unit_price: number;
+  monthly: number;
+}
+
 export interface HetznerCostResult {
   currency: string;
   totalMonthly: number;
@@ -281,6 +291,7 @@ export interface HetznerCostResult {
   unpriced?: string[];
   estimate: boolean;
   note: string;
+  resources: HetznerCostResourceLine[];
 }
 
 interface RawHetznerCostReport {
@@ -291,6 +302,7 @@ interface RawHetznerCostReport {
   unpriced?: string[];
   estimate?: boolean;
   note?: string;
+  resources?: HetznerCostResourceLine[];
 }
 
 /**
@@ -330,6 +342,7 @@ export function parseHetznerCostReport(stdout: string): HetznerCostResult {
     unpriced: parsed.unpriced,
     estimate: parsed.estimate ?? true,
     note: parsed.note || '',
+    resources: parsed.resources || [],
   };
 }
 

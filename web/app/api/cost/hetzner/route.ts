@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
       byCategory: snap.by_category,
       byType: snap.by_type,
       unpriced: snap.unpriced ?? [],
+      resources: snap.resources ?? [],
       fetchedAt: snap.fetched_at,
       estimate: true,
     });
