@@ -289,6 +289,20 @@ async function initSchema(pool: Pool): Promise<void> {
       resources     JSONB DEFAULT '[]'::jsonb,
       fetched_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    -- Real invoice totals scraped from the Hetzner account Console
+    -- (web/lib/hetznerInvoiceScrape.ts) — separate from
+    -- hetzner_cost_snapshots, which is a list-price ESTIMATE never sourced
+    -- from an actual bill. invoice_number is unique so a re-scrape upserts
+    -- rather than duplicating an invoice already seen.
+    CREATE TABLE IF NOT EXISTS hetzner_invoices (
+      id             TEXT PRIMARY KEY,
+      invoice_number TEXT NOT NULL UNIQUE,
+      invoice_date   DATE NOT NULL,
+      total          DOUBLE PRECISION NOT NULL,
+      currency       TEXT NOT NULL,
+      scraped_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
 
   // Idempotent column migrations. Every CREATE TABLE above is IF NOT EXISTS,

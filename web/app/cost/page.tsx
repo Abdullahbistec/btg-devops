@@ -1012,6 +1012,118 @@ function HetznerSpendView() {
         <HetznerReconciliationTable resources={data.resources} currency={data.currency} total={data.totalMonthly} />
       )}
       <HetznerBillingFacts currency={data.currency} />
+      <HetznerInvoicesView />
+    </div>
+  );
+}
+
+interface HetznerInvoice { id: string; invoice_number: string; invoice_date: string; total: number; currency: string; scraped_at: string }
+
+/** Real invoice totals, scraped from the Hetzner account Console rather than
+ * the (invoice-less) Cloud API — see web/lib/hetznerInvoiceScrape.ts's
+ * module doc for the full tradeoff this represents. Admin-only in both
+ * directions (view and trigger): this is meaningfully more sensitive than
+ * the rest of the Hetzner cost view, which only ever touches the scoped,
+ * read-only HCLOUD_TOKEN. */
+function HetznerInvoicesView() {
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const [invoices, setInvoices] = useState<HetznerInvoice[]>([]);
+  const [scraping, setScraping] = useState(false);
+  const [scrapeError, setScrapeError] = useState('');
+
+  const load = useCallback(() => {
+    fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(me => {
+      setIsAdmin(me?.role === 'admin');
+      setChecked(true);
+      if (me?.role !== 'admin') return;
+      fetch('/api/cost/hetzner/invoices').then(r => r.ok ? r.json() : { invoices: [] })
+        .then(d => setInvoices(Array.isArray(d?.invoices) ? d.invoices : []))
+        .catch(() => {});
+    });
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function runScrape() {
+    setScraping(true);
+    setScrapeError('');
+    try {
+      const res = await fetch('/api/cost/hetzner/invoices', { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok || body?.error) throw new Error(body?.error || 'Scrape failed');
+      load();
+    } catch (e) {
+      setScrapeError((e as Error).message);
+    } finally {
+      setScraping(false);
+    }
+  }
+
+  if (!checked || !isAdmin) return null;
+
+  return (
+    <div className="glass" style={{ borderRadius: 10, padding: '18px 20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Actual invoices (scraped)
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>
+            Real billed totals from the Hetzner account Console — not the estimate above.
+          </div>
+        </div>
+        <button onClick={runScrape} disabled={scraping} style={{
+          padding: '5px 12px', fontSize: 11, fontWeight: 700,
+          background: 'transparent', border: `1px solid ${ACCENT}`, borderRadius: 3, color: ACCENT,
+          cursor: scraping ? 'default' : 'pointer', opacity: scraping ? 0.6 : 1,
+        }}>
+          {scraping ? '⟳ Logging in…' : '↻ Scrape now'}
+        </button>
+      </div>
+
+      <div style={{
+        padding: '10px 14px', borderRadius: 6, marginBottom: 12,
+        background: '#FF475718', border: '1px solid #FF475740', color: CRIT,
+        fontSize: 11.5, lineHeight: 1.5,
+      }}>
+        ⚠ This logs into the real Hetzner account with a stored password, unverified against the live site, and
+        limited to one attempt per 24h — a deliberate deviation from this project&apos;s own ADR-001/ADR-006. Does not
+        work if 2FA is enabled on the account.
+      </div>
+
+      {scrapeError && (
+        <div style={{ background: '#FF475718', border: '1px solid #FF475740', borderRadius: 6, padding: '10px 14px', fontSize: 12, color: CRIT, marginBottom: 12 }}>
+          ⚠ {scrapeError}
+        </div>
+      )}
+
+      {invoices.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--muted)' }}>No invoices scraped yet.</div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ textAlign: 'left', color: 'var(--muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                <th style={{ padding: '4px 8px 4px 0', fontWeight: 600 }}>Invoice</th>
+                <th style={{ padding: '4px 8px', fontWeight: 600 }}>Date</th>
+                <th style={{ padding: '4px 0 4px 8px', fontWeight: 600, textAlign: 'right' }}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoices.map(inv => (
+                <tr key={inv.id} style={{ borderTop: '1px solid var(--border)' }}>
+                  <td style={{ padding: '6px 8px 6px 0', color: 'var(--text)' }}>{inv.invoice_number}</td>
+                  <td style={{ padding: '6px 8px', color: 'var(--muted)' }}>{shortDate(inv.invoice_date)}</td>
+                  <td style={{ padding: '6px 0 6px 8px', textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                    {inv.total.toLocaleString(undefined, { style: 'currency', currency: inv.currency })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

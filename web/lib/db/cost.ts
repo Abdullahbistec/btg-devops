@@ -244,6 +244,42 @@ export async function getHetznerCostSnapshot(): Promise<HetznerCostSnapshot | nu
   return rows[0] ?? null;
 }
 
+export interface HetznerInvoiceRow {
+  id: string;
+  invoice_number: string;
+  invoice_date: string;
+  total: number;
+  currency: string;
+  scraped_at: string;
+}
+
+/** Upserts on invoice_number so re-running the scrape (the same invoice
+ * appearing in the Console again) updates rather than duplicates a row. */
+export async function saveHetznerInvoices(
+  invoices: { invoiceNumber: string; date: string; total: number; currency: string }[]
+): Promise<void> {
+  if (invoices.length === 0) return;
+  const db = await getDB();
+  for (const inv of invoices) {
+    await db.query(
+      `INSERT INTO hetzner_invoices (id, invoice_number, invoice_date, total, currency, scraped_at)
+       VALUES ($1, $2, $3, $4, $5, now())
+       ON CONFLICT (invoice_number) DO UPDATE SET
+         invoice_date = excluded.invoice_date,
+         total = excluded.total,
+         currency = excluded.currency,
+         scraped_at = excluded.scraped_at`,
+      [randomUUID(), inv.invoiceNumber, inv.date, inv.total, inv.currency]
+    );
+  }
+}
+
+export async function getHetznerInvoices(limit = 24): Promise<HetznerInvoiceRow[]> {
+  const db = await getDB();
+  const { rows } = await db.query('SELECT * FROM hetzner_invoices ORDER BY invoice_date DESC LIMIT $1', [limit]);
+  return rows;
+}
+
 export interface CostSnapshotHistoryRow {
   subscription_id: string;
   snapshot_date: string;
