@@ -651,6 +651,27 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
   const last = points[points.length - 1]?.total_monthly;
   const delta = first && last && first > 0 ? ((last - first) / first) * 100 : null;
 
+  // This is a step function (flat until a server/volume/IP is added or
+  // removed), so a Y axis anchored at $0 crushes a real change into a
+  // near-invisible wobble. Zoom to the data's own range instead, and mark
+  // the exact days the rate actually stepped — those are the only points
+  // that matter on a series that is otherwise flat by construction.
+  const values = points.map(p => p.total_monthly);
+  const minVal = values.length ? Math.min(...values) : 0;
+  const maxVal = values.length ? Math.max(...values) : 0;
+  const pad = Math.max((maxVal - minVal) * 0.2, maxVal * 0.03, 1);
+  const yDomain: [number, number] = [Math.max(0, minVal - pad), maxVal + pad];
+
+  function ChangeDot(props: { cx?: number; cy?: number; index?: number }) {
+    const { cx, cy, index } = props;
+    if (cx == null || cy == null || index == null || index === 0) return null;
+    const prev = points[index - 1];
+    const cur = points[index];
+    if (!prev || !cur || prev.total_monthly === cur.total_monthly) return null;
+    const up = cur.total_monthly > prev.total_monthly;
+    return <circle cx={cx} cy={cy} r={4} fill={up ? WARN : GOOD} stroke="var(--card)" strokeWidth={1.5} />;
+  }
+
   return (
     <div className="glass" style={{ borderRadius: 10, padding: '18px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
@@ -726,14 +747,14 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
               </linearGradient>
             </defs>
             <XAxis dataKey="day" tickFormatter={shortDate} tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false}
+            <YAxis domain={yDomain} tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false}
               tickFormatter={v => v.toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: 0 })} />
             <Tooltip
               contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11 }}
               labelFormatter={shortDate}
               formatter={(v: number) => [v.toLocaleString(undefined, { style: 'currency', currency }), 'Run rate/mo']}
             />
-            <Area type="stepAfter" dataKey="total_monthly" stroke={ACCENT} strokeWidth={2} fill="url(#hetznerRunRateFill)" dot={false} />
+            <Area type="stepAfter" dataKey="total_monthly" stroke={ACCENT} strokeWidth={2} fill="url(#hetznerRunRateFill)" dot={<ChangeDot />} />
           </AreaChart>
         </ResponsiveContainer>
       )}
@@ -903,6 +924,166 @@ function HetznerSpendView() {
   );
 }
 
+// EU (Germany/Finland) Hetzner Cloud list prices, confirmed against Hetzner's
+// own 15 Jun 2026 price-adjustment page — the same verified figures used in
+// the standalone Hetzner Cost Estimator artifact. [sku, vCPU, RAM GB, disk GB, EUR/mo, USD/mo]
+const K3S_EU_CATALOG: [string, number, number, number, number, number][] = [
+  ['CX23', 2, 4, 40, 5.49, 6.49],
+  ['CX33', 4, 8, 80, 8.49, 9.99],
+  ['CX43', 8, 16, 160, 15.99, 18.49],
+  ['CX53', 16, 32, 320, 29.49, 34.99],
+  ['CPX22', 2, 4, 80, 19.49, 22.99],
+  ['CPX32', 4, 8, 160, 35.49, 41.99],
+  ['CPX42', 8, 16, 240, 69.49, 81.99],
+  ['CCX13', 2, 8, 80, 42.99, 50.49],
+  ['CCX23', 4, 16, 160, 85.99, 101.49],
+  ['CCX33', 8, 32, 240, 138.49, 162.99],
+];
+
+interface PlanLine { id: string; sku: string; qty: number }
+interface PlanGroup { id: string; name: string; lines: PlanLine[] }
+const PLAN_KEY = 'hetzner-plan-v1';
+
+// Shape mirrors the consolidation plan: a shared cluster for dev/UAT, and a
+// separate cluster per production workload. Starts empty — node counts are
+// whatever gets agreed in the walkthrough, not something to guess here.
+function defaultPlan(): PlanGroup[] {
+  return [
+    { id: 'devuat', name: 'Dev/UAT — shared K3s cluster', lines: [] },
+    { id: 'prod', name: 'Production — dedicated cluster', lines: [] },
+  ];
+}
+
+function findSku(sku: string) {
+  return K3S_EU_CATALOG.find(r => r[0] === sku) ?? K3S_EU_CATALOG[0];
+}
+
+function HetznerPlanView() {
+  const [groups, setGroups] = useState<PlanGroup[]>(defaultPlan);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PLAN_KEY);
+      if (raw) setGroups(JSON.parse(raw));
+    } catch { /* private browsing / storage blocked — start from defaults */ }
+    setLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (!loaded) return;
+    try { localStorage.setItem(PLAN_KEY, JSON.stringify(groups)); } catch { /* best-effort only */ }
+  }, [groups, loaded]);
+
+  function addLine(gid: string) {
+    setGroups(gs => gs.map(g => g.id === gid
+      ? { ...g, lines: [...g.lines, { id: `${Date.now()}-${g.lines.length}`, sku: K3S_EU_CATALOG[0][0], qty: 1 }] }
+      : g));
+  }
+  function updateLine(gid: string, lid: string, patch: Partial<PlanLine>) {
+    setGroups(gs => gs.map(g => g.id === gid
+      ? { ...g, lines: g.lines.map(l => l.id === lid ? { ...l, ...patch } : l) }
+      : g));
+  }
+  function removeLine(gid: string, lid: string) {
+    setGroups(gs => gs.map(g => g.id === gid ? { ...g, lines: g.lines.filter(l => l.id !== lid) } : g));
+  }
+  function addGroup() {
+    setGroups(gs => [...gs, { id: `${Date.now()}`, name: `Cluster ${gs.length + 1}`, lines: [] }]);
+  }
+  function renameGroup(gid: string, name: string) {
+    setGroups(gs => gs.map(g => g.id === gid ? { ...g, name } : g));
+  }
+  function removeGroup(gid: string) {
+    setGroups(gs => gs.filter(g => g.id !== gid));
+  }
+
+  function groupMonthly(g: PlanGroup, usd: boolean) {
+    return g.lines.reduce((sum, l) => sum + findSku(l.sku)[usd ? 5 : 4] * l.qty, 0);
+  }
+  const totalEur = groups.reduce((s, g) => s + groupMonthly(g, false), 0);
+  const totalUsd = groups.reduce((s, g) => s + groupMonthly(g, true), 0);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{
+        padding: '10px 14px', borderRadius: 6, background: '#54A0FF18', border: '1px solid #54A0FF40',
+        color: INFO, fontSize: 12, lineHeight: 1.5,
+      }}>
+        ⓘ A projection, not live data — size the servers a proposed setup would need and see the
+        monthly run rate before anything is provisioned. Pricing is Hetzner&apos;s EU (Germany/Finland)
+        cloud list. Saved only in this browser, per the same offline-first approach as the standalone
+        estimator.
+      </div>
+
+      <div className="glass" style={{ borderRadius: 10, padding: '22px 24px' }}>
+        <div style={{ fontSize: 44, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+          {totalEur.toLocaleString(undefined, { style: 'currency', currency: 'EUR' })}
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)', marginLeft: 8 }}>/month</span>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+          ≈ {totalUsd.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}/month · compute only — excludes volumes, IPv4, backups, egress and VAT. For those, use the standalone Hetzner Cost Estimator.
+        </div>
+      </div>
+
+      {groups.map(g => {
+        const gTotal = groupMonthly(g, false);
+        return (
+          <div key={g.id} className="glass" style={{ borderRadius: 10, padding: '16px 18px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+              <input value={g.name} onChange={e => renameGroup(g.id, e.target.value)} aria-label="Cluster name" style={{
+                background: 'transparent', border: 'none', borderBottom: '1px solid var(--border)',
+                color: 'var(--text)', fontSize: 14, fontWeight: 700, padding: '2px 0', flex: 1, minWidth: 160,
+              }} />
+              <div style={{ fontSize: 13, fontWeight: 700, color: ACCENT, fontVariantNumeric: 'tabular-nums' }}>
+                {gTotal.toLocaleString(undefined, { style: 'currency', currency: 'EUR' })}/mo
+              </div>
+              <button onClick={() => removeGroup(g.id)} style={{
+                background: 'transparent', border: 'none', color: CRIT, cursor: 'pointer', fontSize: 12,
+              }}>Remove cluster</button>
+            </div>
+            {g.lines.length === 0 && (
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>No nodes added yet.</div>
+            )}
+            {g.lines.map(l => {
+              const r = findSku(l.sku);
+              return (
+                <div key={l.id} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, fontSize: 12, flexWrap: 'wrap' }}>
+                  <select value={l.sku} onChange={e => updateLine(g.id, l.id, { sku: e.target.value })} style={{
+                    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)', padding: '4px 6px',
+                  }}>
+                    {K3S_EU_CATALOG.map(row => (
+                      <option key={row[0]} value={row[0]}>
+                        {row[0]} — {row[1]} vCPU / {row[2]}GB — €{row[4]}/mo
+                      </option>
+                    ))}
+                  </select>
+                  <span style={{ color: 'var(--muted)' }}>×</span>
+                  <input type="number" min={1} value={l.qty} onChange={e => updateLine(g.id, l.id, { qty: Math.max(1, parseInt(e.target.value || '1', 10)) })} style={{
+                    width: 56, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)', padding: '4px 6px',
+                  }} />
+                  <span style={{ marginLeft: 'auto', color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>
+                    {(r[4] * l.qty).toLocaleString(undefined, { style: 'currency', currency: 'EUR' })}/mo
+                  </span>
+                  <button onClick={() => removeLine(g.id, l.id)} aria-label={`Remove ${l.sku}`} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}>×</button>
+                </div>
+              );
+            })}
+            <button onClick={() => addLine(g.id)} style={{
+              marginTop: 6, padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 3,
+              background: 'transparent', border: `1px solid ${ACCENT}`, color: ACCENT, cursor: 'pointer',
+            }}>+ Add node</button>
+          </div>
+        );
+      })}
+
+      <button onClick={addGroup} style={{
+        alignSelf: 'flex-start', padding: '6px 14px', fontSize: 12, fontWeight: 700, borderRadius: 4,
+        background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)', cursor: 'pointer',
+      }}>+ Add cluster</button>
+    </div>
+  );
+}
+
 function SpendView() {
   const [data, setData] = useState<SpendData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -910,6 +1091,7 @@ function SpendView() {
   const [statusNote, setStatusNote] = useState('');
   const [error, setError] = useState('');
   const [provider, setProvider] = useState<'azure' | 'hetzner'>('azure');
+  const [hetznerMode, setHetznerMode] = useState<'current' | 'planned'>('current');
 
   function load() {
     setLoading(true);
@@ -1080,7 +1262,23 @@ function SpendView() {
       </>
       )}
 
-      {provider === 'hetzner' && <HetznerSpendView />}
+      {provider === 'hetzner' && (
+        <>
+          <div style={{ display: 'flex', gap: 3, marginBottom: 12 }}>
+            {(['current', 'planned'] as const).map(m => (
+              <button key={m} onClick={() => setHetznerMode(m)} style={{
+                padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 3, cursor: 'pointer',
+                background: hetznerMode === m ? ACCENT : 'transparent',
+                border: `1px solid ${hetznerMode === m ? ACCENT : 'var(--border)'}`,
+                color: hetznerMode === m ? '#fff' : 'var(--muted)',
+              }}>
+                {m === 'current' ? 'Current' : 'Planned (consolidation)'}
+              </button>
+            ))}
+          </div>
+          {hetznerMode === 'current' ? <HetznerSpendView /> : <HetznerPlanView />}
+        </>
+      )}
     </div>
   );
 }
