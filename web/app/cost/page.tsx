@@ -859,12 +859,21 @@ function HetznerSpendView() {
           {data.totalMonthly.toLocaleString(undefined, { style: 'currency', currency: data.currency })}
           <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)', marginLeft: 8 }}>/month</span>
         </div>
-        {/* The "not a bill" caveat banner was removed at the owner's request.
-            The API still returns `estimate: true` with this figure, and the
-            Claude analysis context still carries the qualifier in words, so
-            the distinction survives everywhere except this panel. */}
         <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
           Estimated from list prices
+        </div>
+        <div style={{
+          marginTop: 14, padding: '10px 14px', borderRadius: 6,
+          background: '#54A0FF18', border: '1px solid #54A0FF40', color: INFO,
+          fontSize: 12, lineHeight: 1.5,
+        }}>
+          ⓘ Not a bill — Hetzner exposes no invoice or spend-history endpoint.
+          This is a monthly run-rate estimate: what today&apos;s servers, volumes,
+          and primary IPs would cost for a full month at current list prices in
+          {' '}{data.currency}, the currency Hetzner itself reports for this
+          account. The chart below re-prices that same estimate for each past
+          day — it moves only when a resource is added or removed, not from
+          actual usage.
         </div>
         {unpriced.length > 0 && (
           // Deliberately loud, not a tooltip: a pricing miss must never look
