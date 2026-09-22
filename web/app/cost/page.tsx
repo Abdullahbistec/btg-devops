@@ -1088,8 +1088,9 @@ function HetznerInvoicesView() {
         fontSize: 11.5, lineHeight: 1.5,
       }}>
         ⚠ This logs into the real Hetzner account with a stored password, unverified against the live site, and
-        limited to one attempt per 24h — a deliberate deviation from this project&apos;s own ADR-001/ADR-006. Does not
-        work if 2FA is enabled on the account.
+        limited to one attempt per 24h — a scoped exception to this project&apos;s ADR-0001, recorded in ADR-0002
+        (docs/adr/), which lists unresolved risks including an unchecked ToS question. Does not work if 2FA is
+        enabled on the account.
       </div>
 
       {scrapeError && (

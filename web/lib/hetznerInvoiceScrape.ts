@@ -18,11 +18,12 @@ const INVOICES_URL = 'https://accounts.hetzner.com/invoice';
  * (see web/app/api/cost/hetzner/route.ts and the ADRs this deviates from)
  * the Hetzner Cloud API has no invoice endpoint at all.
  *
- * This is a deliberate, explicitly-approved deviation from this project's
- * own ADR-001/ADR-006 (docs/hetzner-cost-estimator ADR.md), which kept the
- * Hetzner integration credential-free and API-only. It needs the account's
- * actual login (HETZNER_CONSOLE_EMAIL / HETZNER_CONSOLE_PASSWORD), a
- * materially bigger secret than the scoped, read-only HCLOUD_TOKEN the rest
+ * This is a scoped exception to ADR-0001 (docs/adr/0001-hetzner-credential-free-api-only-integration.md),
+ * recorded in ADR-0002 (docs/adr/0002-hetzner-invoice-scraping-deviation.md)
+ * — read that ADR for the full list of unresolved risks (ToS, credential
+ * encryption, 2FA tradeoff) before relying on this operationally. It needs
+ * the account's actual login (HETZNER_CONSOLE_EMAIL / HETZNER_CONSOLE_PASSWORD),
+ * a materially bigger secret than the scoped, read-only HCLOUD_TOKEN the rest
  * of this project uses — see .env.local.example for the full tradeoff.
  *
  * UNVERIFIED against a live account: a single unauthenticated fetch of
