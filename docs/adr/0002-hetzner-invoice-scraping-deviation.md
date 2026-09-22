@@ -1,6 +1,8 @@
 # ADR-0002: Real invoice scraping is a scoped, explicit exception to ADR-0001
 
-**Status:** Accepted, with unresolved risks the user must weigh before use
+**Status:** Superseded by [ADR-0003](0003-hetzner-invoice-email-ingestion.md) (2026-09-22, same day) —
+kept as the historical record; the Playwright console-login scraper this
+ADR accepted has been removed from the codebase.
 **Date:** 2026-09-22
 
 ## Note on this record

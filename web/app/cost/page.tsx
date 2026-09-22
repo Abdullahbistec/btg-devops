@@ -1067,10 +1067,10 @@ function HetznerInvoicesView() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-            Actual invoices (scraped)
+            Actual invoices (from email)
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>
-            Real billed totals from the Hetzner account Console — not the estimate above.
+            Real billed totals read from Hetzner&apos;s emailed PDF invoices — not the estimate above.
           </div>
         </div>
         <button onClick={runScrape} disabled={scraping} style={{
@@ -1078,19 +1078,19 @@ function HetznerInvoicesView() {
           background: 'transparent', border: `1px solid ${ACCENT}`, borderRadius: 3, color: ACCENT,
           cursor: scraping ? 'default' : 'pointer', opacity: scraping ? 0.6 : 1,
         }}>
-          {scraping ? '⟳ Logging in…' : '↻ Scrape now'}
+          {scraping ? '⟳ Checking mailbox…' : '↻ Check for new invoices'}
         </button>
       </div>
 
       <div style={{
         padding: '10px 14px', borderRadius: 6, marginBottom: 12,
-        background: '#FF475718', border: '1px solid #FF475740', color: CRIT,
+        background: '#FFA50218', border: '1px solid #FFA50240', color: WARN,
         fontSize: 11.5, lineHeight: 1.5,
       }}>
-        ⚠ This logs into the real Hetzner account with a stored password, unverified against the live site, and
-        limited to one attempt per 24h — a scoped exception to this project&apos;s ADR-0001, recorded in ADR-0002
-        (docs/adr/), which lists unresolved risks including an unchecked ToS question. Does not work if 2FA is
-        enabled on the account.
+        ⚠ Reads an IMAP mailbox for Hetzner&apos;s emailed invoice PDFs — needs &quot;email invoice as PDF&quot;
+        turned on in the Hetzner Console (Billing → Invoicing) and mailbox credentials, but never the Hetzner
+        account&apos;s own login (see ADR-0003, docs/adr/). The PDF parser is unverified against a real invoice —
+        the first run may need adjustment.
       </div>
 
       {scrapeError && (
