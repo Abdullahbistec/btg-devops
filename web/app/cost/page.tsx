@@ -707,7 +707,7 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
     <div className="glass" style={{ borderRadius: 10, padding: '18px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          Run Rate History — monthly rate, as measured each day
+          Run Rate History — projected monthly total, re-measured each day
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
           {SPAN_OPTIONS.map(opt => (
@@ -804,7 +804,11 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
             </defs>
             <XAxis dataKey="day" tickFormatter={shortDate} tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false} />
             <YAxis domain={yDomain} tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false}
-              tickFormatter={v => v.toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: 0 })} />
+              // "/mo" is appended directly on the axis, not just the tooltip,
+              // so the chart itself never reads as a daily/cumulative total
+              // to someone who never hovers it — this was flagged as
+              // genuinely ambiguous by a reviewer, not just a style nit.
+              tickFormatter={v => `${v.toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: 0 })}/mo`} />
             <Tooltip
               contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11 }}
               labelFormatter={shortDate}
