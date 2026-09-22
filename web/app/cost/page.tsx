@@ -666,6 +666,15 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
   const deltaAbs = first != null && last != null ? last - first : null;
   const delta = first && last && first > 0 ? ((last - first) / first) * 100 : null;
 
+  // Daily rate is a derived view of the same monthly figure, not a
+  // separately measured cost — Hetzner exposes no per-day spend data (see
+  // hetznerCostHistory's own doc comment), so this is monthly ÷ actual days
+  // in the current calendar month, not a flat /30 that would misstate rate
+  // in February vs a 31-day month.
+  const now = new Date();
+  const daysInCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const dailyRate = last != null ? last / daysInCurrentMonth : null;
+
   // This is a step function (flat until a server/volume/IP is added or
   // removed), so a Y axis anchored at $0 crushes a real change into a
   // near-invisible wobble. Zoom to the data's own range instead, and mark
@@ -737,7 +746,13 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
             <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Current run rate</div>
             <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
               {last.toLocaleString(undefined, { style: 'currency', currency })}
+              <span style={{ fontSize: 11, fontWeight: 400 }}>/mo</span>
             </div>
+            {dailyRate != null && (
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                ≈ {dailyRate.toLocaleString(undefined, { style: 'currency', currency })}/day at today&apos;s rate ({daysInCurrentMonth}-day month)
+              </div>
+            )}
           </div>
           <div>
             <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Change across range</div>
