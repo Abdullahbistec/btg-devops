@@ -7,6 +7,7 @@ btg-devops
 web/node_modules/
 web/.next/
 web/.env.local
+web/.env.docker
 web/*.db
 web/*.db-shm
 web/*.db-wal

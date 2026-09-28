@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "sig": "2358255966 7761",
+  "tier": "thin",
+  "tier_source": "classifier",
+  "rationale": "Proposes a CI workflow and branch rebase to prepare for upstreaming existing fork work; all decisions are in scope and deliverables are independently reversible; actual code landing is explicitly out of scope.",
+  "domains": ["ops"],
+  "seats": [
+    {"role": "party-po", "model": "sonnet"},
+    {"role": "party-architect", "model": "opus"}
+  ],
+  "dropped": []
+}

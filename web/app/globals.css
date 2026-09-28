@@ -27,6 +27,10 @@ select option {
   --warn:     #FFA502;
   --good:     #2ED573;
   --info:     #54A0FF;
+  --tooltip-bg:     rgba(10, 15, 40, 0.95);
+  --tooltip-border: rgba(255, 255, 255, 0.15);
+  --skel-base:  rgba(255, 255, 255, 0.06);
+  --skel-shine: rgba(255, 255, 255, 0.14);
 }
 
 /* ── Ambient background orbs ─────────────────────────────────── */
@@ -49,23 +53,51 @@ body {
 }
 
 /* ── Glass — dark mode (default) ────────────────────────────── */
+/* "Liquid glass": a soft, slowly-drifting light-blob sits under the base
+   tint (background-position animates it), a stronger blur+saturate gives
+   the frosted depth, and two opposing inset highlights fake the chromatic
+   edge you get off curved glass — cyan catching the light on one corner,
+   a warm rim losing it on the other. */
 .glass {
   position:                relative;
   z-index:                 1;
-  background:              rgba(255, 255, 255, 0.06) !important;
-  backdrop-filter:         blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  background-color:        rgba(255, 255, 255, 0.06) !important;
+  background-image:        radial-gradient(closest-side, rgba(63,97,190,0.55), rgba(19,33,77,0.28) 45%, transparent 72%);
+  background-repeat:       no-repeat;
+  background-size:         180% 180%;
+  background-position:     -10% -25%;
+  backdrop-filter:         blur(26px) saturate(200%);
+  -webkit-backdrop-filter: blur(26px) saturate(200%);
   border:                  1px solid rgba(255, 255, 255, 0.15); /* no !important — inline colored borders win */
   border-radius:           16px;
-  box-shadow:              0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255,255,255,0.1);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255,255,255,0.16),
+    inset 1px 0 0 rgba(0,194,255,0.08),
+    inset -1px -1px 0 rgba(123,94,167,0.10);
+  animation: liquidDrift 18s ease-in-out infinite alternate;
 }
 
 .glass-sb {
-  background:              rgba(255, 255, 255, 0.04) !important;
-  backdrop-filter:         blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  background-color:        rgba(255, 255, 255, 0.04) !important;
+  background-image:        radial-gradient(closest-side, rgba(63,97,190,0.32), transparent 70%);
+  background-repeat:       no-repeat;
+  background-size:         220% 220%;
+  background-position:     -20% -30%;
+  backdrop-filter:         blur(26px) saturate(200%);
+  -webkit-backdrop-filter: blur(26px) saturate(200%);
   border-right:            1px solid rgba(255, 255, 255, 0.12);
   box-shadow:              4px 0 32px rgba(0, 0, 0, 0.3);
+  animation: liquidDrift 22s ease-in-out infinite alternate;
+}
+
+@keyframes liquidDrift {
+  from { background-position: -10% -25%; }
+  to   { background-position: 55%  40%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass, .glass-sb { animation: none; }
 }
 
 /* ── Tab pills — dark mode (default) ────────────────────────── */
@@ -95,6 +127,10 @@ body {
   --warn:    #CC7A00;
   --good:    #1A9E50;
   --info:    #1A6ECC;
+  --tooltip-bg:     rgba(255, 255, 255, 0.96);
+  --tooltip-border: rgba(100, 130, 210, 0.25);
+  --skel-base:  rgba(80, 100, 180, 0.08);
+  --skel-shine: rgba(80, 100, 180, 0.16);
 }
 html[data-theme="light"] {
   background:
@@ -105,19 +141,34 @@ html[data-theme="light"] {
 }
 
 [data-theme="light"] .glass {
-  background:              rgba(255, 255, 255, 0.72) !important;
-  backdrop-filter:         blur(20px) saturate(200%);
-  -webkit-backdrop-filter: blur(20px) saturate(200%);
+  background-color:        rgba(255, 255, 255, 0.72) !important;
+  background-image:        radial-gradient(closest-side, rgba(255,255,255,0.9), rgba(255,255,255,0.2) 45%, transparent 72%);
+  background-repeat:       no-repeat;
+  background-size:         180% 180%;
+  background-position:     -10% -25%;
+  backdrop-filter:         blur(28px) saturate(220%);
+  -webkit-backdrop-filter: blur(28px) saturate(220%);
   /* border NOT overridden here — inline colored borders take effect */
-  box-shadow:              0 4px 20px rgba(80, 100, 180, 0.10), 0 1px 4px rgba(0,0,0,0.05), inset 0 1px 0 rgba(255,255,255,0.95);
+  box-shadow:
+    0 4px 20px rgba(80, 100, 180, 0.10),
+    0 1px 4px rgba(0,0,0,0.05),
+    inset 0 1px 0 rgba(255,255,255,0.95),
+    inset 1px 0 0 rgba(0,148,204,0.12),
+    inset -1px -1px 0 rgba(107,79,154,0.10);
+  animation: liquidDrift 18s ease-in-out infinite alternate;
 }
 
 [data-theme="light"] .glass-sb {
-  background:              rgba(225, 232, 255, 0.82) !important;
-  backdrop-filter:         blur(20px) saturate(200%);
-  -webkit-backdrop-filter: blur(20px) saturate(200%);
+  background-color:        rgba(225, 232, 255, 0.82) !important;
+  background-image:        radial-gradient(closest-side, rgba(255,255,255,0.6), transparent 70%);
+  background-repeat:       no-repeat;
+  background-size:         220% 220%;
+  background-position:     -20% -30%;
+  backdrop-filter:         blur(28px) saturate(220%);
+  -webkit-backdrop-filter: blur(28px) saturate(220%);
   border-right:            1px solid rgba(150, 170, 230, 0.30);
   box-shadow:              4px 0 20px rgba(80, 100, 180, 0.08);
+  animation: liquidDrift 22s ease-in-out infinite alternate;
 }
 
 [data-theme="light"] .tab-pill {
@@ -144,6 +195,36 @@ html[data-theme="light"] {
 }
 [data-theme="light"] .recharts-legend-item-text {
   color: #445580 !important;
+}
+
+/* ── Card hover lift ─────────────────────────────────────────── */
+.dash-card {
+  transition: transform 0.2s ease, filter 0.2s ease;
+}
+.dash-card:hover {
+  transform: translateY(-3px);
+  filter: brightness(1.09);
+}
+
+/* ── Content entrance ────────────────────────────────────────── */
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in {
+  animation: fadeSlideIn 0.35s ease both;
+}
+
+/* ── Skeleton shimmer ────────────────────────────────────────── */
+@keyframes skeletonShimmer {
+  0%   { background-position: -300px 0; }
+  100% { background-position: 300px 0; }
+}
+.skel {
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--skel-base) 25%, var(--skel-shine) 37%, var(--skel-base) 63%);
+  background-size: 600px 100%;
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
 }
 
 /* ── Scrollbars ──────────────────────────────────────────────── */

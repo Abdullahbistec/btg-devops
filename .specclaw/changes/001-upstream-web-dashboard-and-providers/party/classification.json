@@ -1,0 +1,4 @@
+{"tier": "thin",
+ "domains": ["ops"],
+ "rationale": "Proposes a CI workflow and branch rebase to prepare for upstreaming existing fork work; all decisions are in scope and deliverables are independently reversible; actual code landing is explicitly out of scope.",
+ "signals": {"blast_radius": "One new CI workflow file for bistec-oss/main; local branch rebase to reconcile 14 commits ahead and 5 commits behind", "unresolved": "Open questions about external/yomal/ and web/ placement are being decided as part of this proposal, not left unresolved", "irreversibility": "CI workflow deleted and rebase undone via standard git operations; process artifacts have no persistent effect"}}

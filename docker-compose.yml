@@ -16,6 +16,9 @@ services:
       - "8090:8090"
     env_file:
       - web/.env.local
+      # Container-only overrides layered on top of web/.env.local (gitignored
+      # -- carries a DB password, see web/.env.docker's own header comment).
+      - web/.env.docker
     environment:
       # `claude -p` (see web/lib/routine-trigger.ts) picks this up as its
       # auth for a headless run — no `claude login` session or keychain

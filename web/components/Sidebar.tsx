@@ -77,7 +77,7 @@ export default function Sidebar() {
       <div style={{ padding: '12px 14px 14px', borderBottom: '1px solid var(--border)', marginBottom: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           {/* Hexagon logo icon */}
-          <svg width="34" height="38" viewBox="0 0 36 40" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+          <svg width="34" height="38" viewBox="0 0 36 40" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0, filter: 'drop-shadow(0 0 8px rgba(0,194,255,0.45))' }}>
             <defs>
               <linearGradient id="hexGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stopColor="#74D7F7" />
@@ -133,7 +133,7 @@ export default function Sidebar() {
                   onMouseLeave={() => setHoveredHref(null)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 8,
-                    margin: '2px 8px', padding: '7px 10px',
+                    margin: '2px 8px', padding: '7px 10px 7px 8px',
                     fontSize: 12, fontWeight: isActive ? 700 : 500,
                     borderRadius: 8,
                     color: isActive ? 'var(--accent)' : isHovered ? 'var(--text)' : 'var(--muted)',
@@ -147,12 +147,13 @@ export default function Sidebar() {
                       : isHovered
                       ? '1px solid rgba(255,255,255,0.12)'
                       : '1px solid rgba(255,255,255,0.05)',
+                    borderLeft: isActive ? '3px solid var(--accent)' : isHovered ? '3px solid rgba(255,255,255,0.12)' : '3px solid rgba(255,255,255,0.05)',
                     boxShadow: isActive
                       ? '0 0 12px rgba(0,194,255,0.18), inset 0 1px 0 rgba(0,194,255,0.1)'
                       : isHovered
                       ? '0 2px 8px rgba(0,0,0,0.15)'
                       : 'none',
-                    transition: 'all 0.15s ease',
+                    transition: 'all 0.18s ease',
                   }}
                 >
                   {item.icon}
@@ -177,9 +178,14 @@ export default function Sidebar() {
         {/* User info */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{
-            width: 24, height: 24, borderRadius: '50%', background: isAdmin ? 'var(--accent2)' : 'var(--muted)',
-            fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0,
-          }}>{initials}</div>
+            width: 28, height: 28, borderRadius: '50%', flexShrink: 0, padding: 2,
+            background: 'conic-gradient(from 180deg, var(--accent), var(--accent2), var(--accent))',
+          }}>
+            <div style={{
+              width: '100%', height: '100%', borderRadius: '50%', background: isAdmin ? 'var(--accent2)' : 'var(--muted)',
+              fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff',
+            }}>{initials}</div>
+          </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 10, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {displayName}
