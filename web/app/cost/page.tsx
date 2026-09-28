@@ -625,6 +625,184 @@ function monthLabelShort(iso: string) {
   return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
 }
 
+function daysInIsoMonth(iso: string): number {
+  const year = Number(iso.slice(0, 4)), month = Number(iso.slice(5, 7));
+  return new Date(year, month, 0).getDate();
+}
+
+/** "Spent this range" / "Daily average" / custom-date-range presentation to
+ * match Azure's SpendHistoryChart above — same layout, same controls,
+ * because that's literally what was asked for ("like azure daily billing
+ * costing part"). The number underneath is NOT the same kind of fact though:
+ * Azure's points are real billed spend that accumulates; Hetzner's run-rate
+ * snapshots are a point-in-time "what would a full month cost" figure that
+ * never sums (see HetznerRunRateChart's own doc comment). What this chart
+ * shows is that rate divided evenly across the days of its own calendar
+ * month — an IMPLIED daily cost, not a measured one — so a multi-day range
+ * total is "if the rate that applied each day had actually been billed
+ * per-day," never a real spend figure. Every label says so; there is no way
+ * to make this into real daily billing without Hetzner exposing one. */
+function HetznerSpendHistoryChart({ fallbackCurrency }: { fallbackCurrency: string }) {
+  const [span, setSpan] = useState<number>(SPAN_OPTIONS[0].days);
+  const [custom, setCustom] = useState<{ from: string; to: string } | null>(null);
+  const [points, setPoints] = useState<HetznerHistoryPoint[]>([]);
+  const [currency, setCurrency] = useState(fallbackCurrency);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const viewTo = custom ? custom.to : toISODate(new Date());
+  const viewFrom = custom ? custom.from : addDaysIso(viewTo, -(span - 1));
+  const viewDays = Math.max(1, Math.round((new Date(viewTo + 'T00:00:00').getTime() - new Date(viewFrom + 'T00:00:00').getTime()) / 86400000) + 1);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
+    // Double the visible window, same reasoning as Azure's chart: the "vs
+    // previous period" comparison needs an equal-length window before it.
+    const fetchDays = Math.max(viewDays * 2, 1);
+    fetch(`/api/cost/hetzner/history?days=${fetchDays}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d?.error) { setError(d.error); setLoading(false); return; }
+        setPoints(Array.isArray(d?.points) ? d.points : []);
+        if (d?.currency) setCurrency(d.currency);
+        setLoading(false);
+      })
+      .catch(e => { setError(String(e)); setLoading(false); });
+  }, [viewFrom, viewTo, viewDays]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const daily = useMemo(
+    () => points.map(p => ({ day: p.day, implied: p.total_monthly / daysInIsoMonth(p.day) })),
+    [points]
+  );
+  const inRange = useMemo(() => daily.filter(d => d.day >= viewFrom && d.day <= viewTo), [daily, viewFrom, viewTo]);
+  const rangeTotal = inRange.reduce((s, d) => s + d.implied, 0);
+  const dailyAvg = inRange.length ? rangeTotal / inRange.length : 0;
+
+  const prevTo = addDaysIso(viewFrom, -1);
+  const prevFrom = addDaysIso(prevTo, -(viewDays - 1));
+  const prevTotal = daily.filter(d => d.day >= prevFrom && d.day <= prevTo).reduce((s, d) => s + d.implied, 0);
+  const rangeDelta = prevTotal > 0 ? ((rangeTotal - prevTotal) / prevTotal) * 100 : null;
+
+  return (
+    <div className="glass" style={{ borderRadius: 10, padding: '18px 20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Implied Daily Cost — run rate divided across each day
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {SPAN_OPTIONS.map(opt => (
+            <button key={opt.days} onClick={() => { setCustom(null); setSpan(opt.days); }} style={{
+              padding: '3px 10px', fontSize: 10, fontWeight: 700, borderRadius: 999, cursor: 'pointer',
+              background: !custom && span === opt.days ? ACCENT : 'transparent',
+              border: `1px solid ${!custom && span === opt.days ? ACCENT : 'var(--border)'}`,
+              color: !custom && span === opt.days ? '#fff' : 'var(--muted)',
+            }}>
+              {opt.label}
+            </button>
+          ))}
+          <button onClick={() => setCustom(c => c ? null : {
+            from: toISODate(new Date(Date.now() - 30 * 86400000)),
+            to: toISODate(new Date()),
+          })} style={{
+            padding: '3px 10px', fontSize: 10, fontWeight: 700, borderRadius: 999, cursor: 'pointer',
+            background: custom ? ACCENT : 'transparent',
+            border: `1px solid ${custom ? ACCENT : 'var(--border)'}`,
+            color: custom ? '#fff' : 'var(--muted)',
+          }}>
+            Custom range
+          </button>
+        </div>
+      </div>
+
+      {custom && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+          <label style={{ fontSize: 10, color: 'var(--muted)', display: 'flex', flexDirection: 'column', gap: 3 }}>
+            From
+            <input type="date" value={custom.from} max={custom.to}
+              onChange={e => setCustom(c => c && { ...c, from: e.target.value })}
+              style={{ fontSize: 11, background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 3, padding: '4px 8px' }} />
+          </label>
+          <label style={{ fontSize: 10, color: 'var(--muted)', display: 'flex', flexDirection: 'column', gap: 3 }}>
+            To
+            <input type="date" value={custom.to} min={custom.from} max={toISODate(new Date())}
+              onChange={e => setCustom(c => c && { ...c, to: e.target.value })}
+              style={{ fontSize: 11, background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 3, padding: '4px 8px' }} />
+          </label>
+        </div>
+      )}
+
+      <div style={{
+        padding: '8px 12px', borderRadius: 6, marginBottom: 14,
+        background: '#54A0FF18', border: '1px solid #54A0FF40', color: INFO,
+        fontSize: 11, lineHeight: 1.5,
+      }}>
+        ⓘ Not measured spend — Hetzner exposes no daily billing data at all. Each figure below is the day&apos;s
+        monthly run rate divided by the days in that calendar month, so a range total is what you&apos;d have
+        accrued <em>if</em> that day&apos;s rate had applied continuously — not an actual bill.
+      </div>
+
+      {!loading && !error && (
+        <div style={{ display: 'flex', gap: 24, marginBottom: 16, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Implied cost this range</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 2 }}>
+              <span style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+                {rangeTotal.toLocaleString(undefined, { style: 'currency', currency })}
+              </span>
+              {rangeDelta !== null && (
+                <span style={{ fontSize: 11, fontWeight: 700, color: rangeDelta >= 0 ? WARN : GOOD }}>
+                  {rangeDelta >= 0 ? '▲' : '▼'} {Math.abs(rangeDelta).toFixed(1)}% vs previous {viewDays}d
+                </span>
+              )}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Daily average</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
+              {dailyAvg.toLocaleString(undefined, { style: 'currency', currency })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {loading && <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 32 }}>Loading…</div>}
+      {!loading && error && <div style={{ fontSize: 12, color: CRIT, textAlign: 'center', padding: 32 }}>⚠ {error}</div>}
+
+      {!loading && !error && inRange.length < MIN_HISTORY_POINTS && (
+        <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--muted)', fontSize: 12 }}>
+          Accumulating daily history — check back in a few days.<br />
+          <span style={{ fontSize: 11 }}>{inRange.length} day{inRange.length === 1 ? '' : 's'} recorded so far in this range.</span>
+        </div>
+      )}
+
+      {!loading && !error && inRange.length >= MIN_HISTORY_POINTS && (
+        <ResponsiveContainer width="100%" height={200}>
+          <AreaChart data={inRange} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+            <defs>
+              <linearGradient id="hetznerImpliedFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={ACCENT} stopOpacity={0.3} />
+                <stop offset="100%" stopColor={ACCENT} stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
+            <XAxis dataKey="day" tickFormatter={shortDate} tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false}
+              tickFormatter={v => v.toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: 2 })} />
+            <Tooltip
+              contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11 }}
+              labelFormatter={shortDate}
+              formatter={(v: number) => [v.toLocaleString(undefined, { style: 'currency', currency }), 'Implied daily cost']}
+            />
+            <Area type="monotone" dataKey="implied" stroke={ACCENT} strokeWidth={2} fill="url(#hetznerImpliedFill)" dot={false} />
+          </AreaChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
 function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string }) {
   const [span, setSpan] = useState<number>(SPAN_OPTIONS[0].days);
   const [granularity, setGranularity] = useState<'day' | 'month'>('day');
@@ -1057,6 +1235,7 @@ function HetznerSpendView() {
           </div>
         )}
       </div>
+      <HetznerSpendHistoryChart fallbackCurrency={data.currency} />
       <HetznerRunRateChart fallbackCurrency={data.currency} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <BreakdownCard title="By Category" rows={cat} total={data.totalMonthly} currency={data.currency} color={ACCENT} />
