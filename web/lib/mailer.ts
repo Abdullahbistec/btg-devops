@@ -133,6 +133,47 @@ export async function sendAuditSummaryEmail(
   });
 }
 
+/** Daily Hetzner run-rate summary — the "auto-summarize daily billing cost"
+ * counterpart to sendAuditSummaryEmail above, sent once per day right after
+ * the scheduler takes that day's Hetzner snapshot (see
+ * runDailyHetznerCostRefresh in web/lib/scheduler.ts). `change` is the
+ * classified event from buildHetznerChangeEvents (web/lib/db/cost.ts) if the
+ * rate moved from yesterday, or null if it's unchanged — this is a run-rate
+ * estimate, not a real invoice, so the subject/body say so explicitly rather
+ * than reading like a bill. */
+export async function sendHetznerCostSummaryEmail(
+  to: string,
+  data: { totalMonthly: number; currency: string; change: { description: string; delta: number } | null }
+): Promise<void> {
+  const amount = data.totalMonthly.toLocaleString('en-US', { style: 'currency', currency: data.currency });
+  const changeLine = data.change
+    ? `${data.change.delta >= 0 ? '+' : ''}${data.change.delta.toLocaleString('en-US', { style: 'currency', currency: data.currency })} — ${data.change.description}`
+    : 'No change since yesterday';
+
+  if (DEV_MODE) {
+    console.log(`\n[BTG DevOps] Hetzner daily run-rate: ${amount}/month (${changeLine})\n`);
+    return;
+  }
+  const from = process.env.SMTP_FROM ?? `BTG DevOps <${process.env.SMTP_USER}>`;
+  const appUrl = (process.env.APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+  const transporter = createTransport();
+  await transporter.sendMail({
+    from, to,
+    subject: `[BTG DevOps] Hetzner daily run-rate — ${amount}/month`,
+    html: `
+      <div style="font-family:'Segoe UI',sans-serif;background:#050818;padding:32px;border-radius:12px;max-width:500px;border:1px solid rgba(0,194,255,0.2);">
+        <h2 style="color:#00C2FF;margin:0 0 4px;">Hetzner Daily Run-Rate</h2>
+        <p style="color:#5B6FA8;margin:0 0 20px;font-size:12px;">Estimate, not a bill — Hetzner exposes no invoice endpoint.</p>
+        <div style="font-size:32px;font-weight:800;color:#E8ECF8;">${amount}<span style="font-size:14px;color:#5B6FA8;margin-left:6px;">/month</span></div>
+        <div style="margin-top:10px;font-size:13px;font-weight:700;color:${data.change && data.change.delta >= 0 ? '#FFA502' : '#2ED573'};">${changeLine}</div>
+        <a href="${appUrl}/cost" style="display:inline-block;margin-top:20px;padding:10px 20px;background:#00C2FF;color:#04141a;font-weight:700;text-decoration:none;border-radius:6px;font-size:13px;">View Hetzner cost →</a>
+        <p style="margin:16px 0 0;font-size:11px;color:#2A3560;">BTG DevOps Security Console · Internal Use Only</p>
+      </div>
+    `,
+    text: `Hetzner daily run-rate: ${amount}/month\n${changeLine}\n\n(Estimate, not a bill — Hetzner exposes no invoice endpoint.)\n\nView: ${appUrl}/cost`,
+  });
+}
+
 function buildOTPEmail(otp: string) {
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"/></head>

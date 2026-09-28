@@ -1,4 +1,5 @@
-import { getDB, hasCostSnapshotHistoryRow, hasBackfillRequestToday, createCostBackfillRequest, completeCostFetchRequest, failCostFetchRequest, getStaleRunningAudits, failAudit, getHetznerCostSnapshot, saveHetznerCostSnapshot, hasMeasuredHetznerSnapshotToday, hasRunningAudit } from '@/lib/db';
+import { getDB, hasCostSnapshotHistoryRow, hasBackfillRequestToday, createCostBackfillRequest, completeCostFetchRequest, failCostFetchRequest, getStaleRunningAudits, failAudit, getHetznerCostSnapshot, saveHetznerCostSnapshot, hasMeasuredHetznerSnapshotToday, hasRunningAudit, getHetznerCostHistory, buildHetznerChangeEvents } from '@/lib/db';
+import { sendHetznerCostSummaryEmail, getNotificationRecipients } from '@/lib/mailer';
 // NOT a static top-level import, deliberately. instrumentation.ts reaches
 // this file via a dynamic import, but scheduler.ts's own module graph still
 // gets eagerly resolved for Next's Edge-runtime bundle of instrumentation.ts
@@ -157,7 +158,30 @@ async function runDailyHetznerCostRefresh() {
       byCategory: report.byCategory,
       byType: report.byType,
       unpriced: report.unpriced,
+      resources: report.resources,
     });
+
+    // "Auto-summarize daily billing cost" — one email per day, right after
+    // the day's snapshot lands, so it can never fire more than once even if
+    // the scheduler ticks again later the same day (hasMeasuredHetznerSnapshotToday
+    // above would then short-circuit before this runs again). Own try/catch:
+    // a mail failure must not make the caller think the cost refresh itself
+    // failed, since the snapshot above already saved successfully.
+    try {
+      const recipients = getNotificationRecipients();
+      if (recipients) {
+        const points = await getHetznerCostHistory(2);
+        const events = buildHetznerChangeEvents(points);
+        const latest = events[0] ?? null;
+        await sendHetznerCostSummaryEmail(recipients, {
+          totalMonthly: report.totalMonthly,
+          currency: report.currency,
+          change: latest ? { description: latest.description, delta: latest.delta } : null,
+        });
+      }
+    } catch (e) {
+      console.error('[scheduler] daily Hetzner cost summary email failed:', e);
+    }
   } catch (e) {
     console.error('[scheduler] daily Hetzner cost refresh failed:', e);
   }
