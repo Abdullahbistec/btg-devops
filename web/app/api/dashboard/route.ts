@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
   try {
     const auditId = req.nextUrl.searchParams.get('audit_id') ?? undefined;
     const scope   = req.nextUrl.searchParams.get('scope') ?? '';
+    const granularity = req.nextUrl.searchParams.get('granularity') === 'month' ? 'month' : 'day';
     const db = await getDB();
 
     // Latest completed audit if no ID specified — must actually match the requested scope,
@@ -88,24 +89,41 @@ export async function GET(req: NextRequest) {
     `, auditParams);
     const byCategory = byCategoryRes.rows as { category: string; count: number }[];
 
+    // Fetched wider than the 20-row window below on purpose: bucketing by
+    // day (and especially by month) collapses many raw audit rows into far
+    // fewer points, so a bucketed WINDOW of 10 needs a much larger raw pool
+    // to draw from than 10 unbucketed rows would.
     const trendRawRes = await db.query(`
       SELECT id, name, started_at, total_findings, critical_count, warning_count, info_count
       FROM audits
       WHERE status = 'completed'
-      ORDER BY started_at DESC LIMIT 20
+      ORDER BY started_at DESC LIMIT 500
     `);
-    const trendRaw = trendRawRes.rows as {
+    const trendAllRuns = trendRawRes.rows as {
       id: string; name: string; started_at: string;
       total_findings: number; critical_count: number;
       warning_count: number; info_count: number;
     }[];
 
+    // Bucket down to one row per calendar day or month — the LAST (most
+    // recent) run in each bucket, since trendAllRuns is newest-first and a
+    // Map keeps only the first value written per key. Multiple audits on
+    // the same day collapsing to one point is the same "measured once per
+    // period" convention the Hetzner run-rate history already uses.
+    const bucketed = new Map<string, typeof trendAllRuns[number]>();
+    for (const run of trendAllRuns) {
+      if (!run.started_at) continue;
+      const key = granularity === 'month' ? run.started_at.slice(0, 7) : run.started_at.slice(0, 10);
+      if (!bucketed.has(key)) bucketed.set(key, run);
+    }
+    const trendRaw = [...bucketed.values()];
+
     // Audits don't run on a fixed calendar cadence, so there's no "this
     // audit, one year ago" the way a dated metric would have. The closest
-    // equivalent comparison this data supports is by POSITION: the most
-    // recent 10 runs against the 10 runs before those, paired up 1st-to-1st,
-    // 2nd-to-2nd, etc. — trendRaw is newest-first, so reverse to chronological
-    // before slicing the two windows out.
+    // equivalent comparison this data supports is by POSITION within the
+    // chosen granularity: the most recent 10 days/months against the 10
+    // before those, paired up 1st-to-1st, 2nd-to-2nd, etc. — trendRaw is
+    // newest-first, so reverse to chronological before slicing the windows.
     const WINDOW = 10;
     const chronological = [...trendRaw].reverse();
     const current  = chronological.slice(-WINDOW);
@@ -177,6 +195,7 @@ export async function GET(req: NextRequest) {
       byCategory,
       trend,
       trendChangePct,
+      trendGranularity: granularity,
       subscriptions: subs,
       recentAudits,
       resolvedAuditId,

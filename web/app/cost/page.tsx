@@ -610,8 +610,24 @@ interface HetznerChangeEvent { day: string; description: string; delta: number; 
  * line starts the day the first snapshot was taken and fills in from there.
  * Below MIN_HISTORY_POINTS it shows the same honest placeholder the Azure
  * chart uses rather than a near-empty chart that reads as broken. */
+/** Buckets a day-ordered points array down to one point per calendar month —
+ * the LAST day recorded in each month, since a run rate is a point-in-time
+ * value, not something that sums or averages meaningfully across a month.
+ * Keeps `day` as that last recorded date (so the tooltip/axis still show a
+ * real date) but callers format the label as a month, not a day. */
+function bucketPointsByMonth(points: HetznerHistoryPoint[]): HetznerHistoryPoint[] {
+  const byMonth = new Map<string, HetznerHistoryPoint>();
+  for (const p of points) byMonth.set(p.day.slice(0, 7), p); // YYYY-MM — last write per key wins, points are day-ascending
+  return [...byMonth.values()];
+}
+
+function monthLabelShort(iso: string) {
+  return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+}
+
 function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string }) {
   const [span, setSpan] = useState<number>(SPAN_OPTIONS[0].days);
+  const [granularity, setGranularity] = useState<'day' | 'month'>('day');
   const [points, setPoints] = useState<HetznerHistoryPoint[]>([]);
   const [events, setEvents] = useState<HetznerChangeEvent[]>([]);
   const [currency, setCurrency] = useState(fallbackCurrency);
@@ -675,12 +691,19 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
   const daysInCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const dailyRate = last != null ? last / daysInCurrentMonth : null;
 
+  // The chart itself can show one point per day or bucket down to one per
+  // month (bucketPointsByMonth) — a display choice only. The stats above
+  // (current rate, change across range, events count) stay based on the
+  // full daily `points` regardless, since those describe the actual current
+  // state, not how the chart happens to be drawn.
+  const chartPoints = granularity === 'month' ? bucketPointsByMonth(points) : points;
+
   // This is a step function (flat until a server/volume/IP is added or
   // removed), so a Y axis anchored at $0 crushes a real change into a
   // near-invisible wobble. Zoom to the data's own range instead, and mark
   // the exact days the rate actually stepped — those are the only points
   // that matter on a series that is otherwise flat by construction.
-  const values = points.map(p => p.total_monthly);
+  const values = chartPoints.map(p => p.total_monthly);
   const minVal = values.length ? Math.min(...values) : 0;
   const maxVal = values.length ? Math.max(...values) : 0;
   const pad = Math.max((maxVal - minVal) * 0.2, maxVal * 0.03, 1);
@@ -691,13 +714,13 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
     if (cx == null || cy == null || index == null) return null;
     // The most recent point is always marked, in a neutral color, as "this
     // is now" — distinct from the orange/green dots that mark which earlier
-    // days actually moved the rate.
-    if (index === points.length - 1) {
+    // points actually moved the rate.
+    if (index === chartPoints.length - 1) {
       return <circle cx={cx} cy={cy} r={4.5} fill={ACCENT} stroke="var(--card)" strokeWidth={1.5} />;
     }
     if (index === 0) return null;
-    const prev = points[index - 1];
-    const cur = points[index];
+    const prev = chartPoints[index - 1];
+    const cur = chartPoints[index];
     if (!prev || !cur || prev.total_monthly === cur.total_monthly) return null;
     const up = cur.total_monthly > prev.total_monthly;
     return <circle cx={cx} cy={cy} r={4} fill={up ? WARN : GOOD} stroke="var(--card)" strokeWidth={1.5} />;
@@ -709,7 +732,19 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
         <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
           Run Rate History — projected monthly total, re-measured each day
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 4 }} role="group" aria-label="Chart granularity">
+            {(['day', 'month'] as const).map(g => (
+              <button key={g} onClick={() => setGranularity(g)} aria-pressed={granularity === g} style={{
+                padding: '3px 10px', fontSize: 10, fontWeight: 700, borderRadius: 999, cursor: 'pointer',
+                background: granularity === g ? 'var(--text)' : 'transparent',
+                border: `1px solid ${granularity === g ? 'var(--text)' : 'var(--border)'}`,
+                color: granularity === g ? 'var(--bg)' : 'var(--muted)',
+              }}>
+                {g === 'day' ? 'Daily' : 'Monthly'}
+              </button>
+            ))}
+          </div>
           {SPAN_OPTIONS.map(opt => (
             <button key={opt.days} onClick={() => setSpan(opt.days)} style={{
               padding: '3px 10px', fontSize: 10, fontWeight: 700, borderRadius: 999, cursor: 'pointer',
@@ -795,14 +830,14 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
 
       {!loading && !error && points.length >= MIN_HISTORY_POINTS && (
         <ResponsiveContainer width="100%" height={200}>
-          <AreaChart data={points} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+          <AreaChart data={chartPoints} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
             <defs>
               <linearGradient id="hetznerRunRateFill" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={ACCENT} stopOpacity={0.3} />
                 <stop offset="100%" stopColor={ACCENT} stopOpacity={0.02} />
               </linearGradient>
             </defs>
-            <XAxis dataKey="day" tickFormatter={shortDate} tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false} />
+            <XAxis dataKey="day" tickFormatter={granularity === 'month' ? monthLabelShort : shortDate} tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false} />
             <YAxis domain={yDomain} tick={{ fill: 'var(--muted)', fontSize: 9 }} axisLine={false} tickLine={false}
               // "/mo" is appended directly on the axis, not just the tooltip,
               // so the chart itself never reads as a daily/cumulative total
@@ -811,7 +846,7 @@ function HetznerRunRateChart({ fallbackCurrency }: { fallbackCurrency: string })
               tickFormatter={v => `${v.toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: 0 })}/mo`} />
             <Tooltip
               contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11 }}
-              labelFormatter={shortDate}
+              labelFormatter={granularity === 'month' ? monthLabelShort : shortDate}
               formatter={(v: number) => [v.toLocaleString(undefined, { style: 'currency', currency }), 'Run rate/mo']}
             />
             <Area type="stepAfter" dataKey="total_monthly" stroke={ACCENT} strokeWidth={2} fill="url(#hetznerRunRateFill)" dot={<ChangeDot />} />

@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import KPICard from '@/components/KPICard';
+import { KPISkeletonRow, ChartSkeleton, TableSkeleton } from '@/components/Skeleton';
 import { useEscapeToClose } from '@/hooks/useEscapeToClose';
 import {
   ResponsiveContainer, AreaChart, Area, Line, LabelList, XAxis, YAxis, Tooltip,
@@ -18,6 +19,7 @@ interface DashData {
   byCategory: { category: string; count: number }[];
   trend: { id: string; name: string; started_at: string; total_findings: number; critical_count: number; warning_count: number; info_count: number; prev_total_findings: number | null }[];
   trendChangePct: number | null;
+  trendGranularity: 'day' | 'month';
   subscriptions: { id: string; name: string; is_active: boolean }[];
   recentAudits: { id: string; name: string; status: string; started_at: string; total_findings: number; critical_count: number; warning_count: number }[];
   resolvedAuditId: string;
@@ -74,12 +76,14 @@ function DashboardInner() {
   const [data, setData] = useState<DashData | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [loading, setLoading] = useState(true);
+  const [trendGranularity, setTrendGranularity] = useState<'day' | 'month'>('day');
 
   const load = useCallback(async () => {
     setLoading(true);
     const qs = new URLSearchParams();
     if (auditId) qs.set('audit_id', auditId);
     if (scope)   qs.set('scope', scope);
+    qs.set('granularity', trendGranularity);
 
     const [d, f] = await Promise.all([
       fetch(`/api/dashboard?${qs}`).then(r => r.json()),
@@ -88,7 +92,7 @@ function DashboardInner() {
     setData(d);
     setFindings(Array.isArray(f) ? f : []);
     setLoading(false);
-  }, [auditId, scope]);
+  }, [auditId, scope, trendGranularity]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -102,8 +106,12 @@ function DashboardInner() {
     // rendered as a single stacked Area pair, not per-segment red/green.
     const bandLow   = prev === null ? null : Math.min(t.total_findings, prev);
     const bandRange = prev === null ? null : Math.abs(t.total_findings - prev);
+    const label = !t.started_at ? '—'
+      : trendGranularity === 'month'
+        ? new Date(t.started_at).toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
+        : t.started_at.slice(5, 10);
     return {
-      name: t.started_at ? t.started_at.slice(5, 10) : '—',
+      name: label,
       Findings: t.total_findings,
       Critical: t.critical_count,
       PreviousFindings: prev,
@@ -171,12 +179,29 @@ function DashboardInner() {
               <PPPendingCard credsConfigured={data?.ppCredsConfigured ?? false} subscriptionId={sub?.id ?? ''} onAuditTriggered={load} />
             )}
 
-            {/* Main content — shown for Azure/All (always) or PP when data is ready */}
-            {(!isPP || data?.ppReady) && (
+            {/* Initial loading skeleton — only while there's no data to show yet;
+                a background refresh (data already present) keeps the old view
+                on screen instead of flashing back to skeletons. */}
+            {!data && (
               <>
+                <KPISkeletonRow />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.8fr 1.6fr 1.5fr', gap: 8 }}>
+                  <ChartSkeleton height={130} />
+                  <ChartSkeleton height={155} />
+                  <ChartSkeleton height={155} />
+                  <ChartSkeleton height={155} />
+                </div>
+                <TableSkeleton />
+              </>
+            )}
+
+            {/* Main content — shown for Azure/All (always) or PP when data is ready */}
+            {data && (!isPP || data?.ppReady) && (
+              <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <InsightStrip data={data} />
                 {/* KPI ROW */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8 }}>
-                  <KPICard label="Total Findings" value={data?.kpi.total ?? 0} color="#00C2FF" sparkData={sparkVals}
+                <div style={{ display: 'grid', gridTemplateColumns: '1.6fr repeat(4,1fr)', gap: 8 }}>
+                  <KPICard hero label="Total Findings" value={data?.kpi.total ?? 0} color="#00C2FF" sparkData={sparkVals}
                     icon={<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="#00C2FF" strokeWidth="1.5"><path d="M2 10l3-3 2.5 2 4-5"/></svg>}
                   />
                   <KPICard label="Critical Findings" value={data?.kpi.critical ?? 0} color="#FF4757" sparkData={critVals}
@@ -207,7 +232,7 @@ function DashboardInner() {
                           <Pie data={pieData} cx="50%" cy="50%" innerRadius={32} outerRadius={52} dataKey="value" paddingAngle={2}>
                             {pieData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
                           </Pie>
-                          <Tooltip contentStyle={{ background: '#0E1333', border: '1px solid #1A2550', borderRadius: 4, fontSize: 11 }} />
+                          <Tooltip contentStyle={{ background: 'var(--tooltip-bg)', border: '1px solid var(--tooltip-border)', borderRadius: 4, fontSize: 11 }} labelStyle={{ color: 'var(--text)' }} itemStyle={{ color: 'var(--text)' }} />
                         </PieChart>
                       </ResponsiveContainer>
                     ) : <EmptyState />}
@@ -242,7 +267,7 @@ function DashboardInner() {
                         <BarChart data={serviceData} layout="vertical" margin={{ top: 0, right: 30, left: 4, bottom: 0 }}>
                           <XAxis type="number" tick={{ fill: '#2A3560', fontSize: 9 }} axisLine={false} tickLine={false} />
                           <YAxis type="category" dataKey="name" tick={{ fill: '#5B6FA8', fontSize: 10 }} axisLine={false} tickLine={false} width={meta.yAxisWidth} />
-                          <Tooltip contentStyle={{ background: '#0E1333', border: '1px solid #1A2550', borderRadius: 4, fontSize: 11 }} />
+                          <Tooltip contentStyle={{ background: 'var(--tooltip-bg)', border: '1px solid var(--tooltip-border)', borderRadius: 4, fontSize: 11 }} labelStyle={{ color: 'var(--text)' }} itemStyle={{ color: 'var(--text)' }} />
                           <Bar dataKey="count" radius={[0, 2, 2, 0]}>
                             {serviceData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
                           </Bar>
@@ -257,7 +282,7 @@ function DashboardInner() {
                         <BarChart data={categoryData} layout="vertical" margin={{ top: 0, right: 30, left: 4, bottom: 0 }}>
                           <XAxis type="number" tick={{ fill: '#2A3560', fontSize: 9 }} axisLine={false} tickLine={false} />
                           <YAxis type="category" dataKey="name" tick={{ fill: '#5B6FA8', fontSize: 10 }} axisLine={false} tickLine={false} width={110} />
-                          <Tooltip contentStyle={{ background: '#0E1333', border: '1px solid #1A2550', borderRadius: 4, fontSize: 11 }} />
+                          <Tooltip contentStyle={{ background: 'var(--tooltip-bg)', border: '1px solid var(--tooltip-border)', borderRadius: 4, fontSize: 11 }} labelStyle={{ color: 'var(--text)' }} itemStyle={{ color: 'var(--text)' }} />
                           <Bar dataKey="count" radius={[0, 2, 2, 0]}>
                             {categoryData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
                           </Bar>
@@ -273,7 +298,28 @@ function DashboardInner() {
 
                 {/* CHART ROW 2 */}
                 <div style={{ display: 'grid', gridTemplateColumns: '2.5fr 1.5fr', gap: 8, minHeight: 200 }}>
-                  <Card title="Findings Trend Over Time" sub="Total findings per audit run" color="#7B5EA7" right={<TrendChangeBadge pct={data?.trendChangePct ?? null} />}>
+                  <Card
+                    title="Findings Trend Over Time"
+                    sub={trendGranularity === 'month' ? 'Latest audit per month' : 'Latest audit per day'}
+                    color="#7B5EA7"
+                    right={
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ display: 'flex', gap: 3 }} role="group" aria-label="Trend granularity">
+                          {(['day', 'month'] as const).map(g => (
+                            <button key={g} onClick={() => setTrendGranularity(g)} aria-pressed={trendGranularity === g} style={{
+                              padding: '2px 8px', fontSize: 9, fontWeight: 700, borderRadius: 999, cursor: 'pointer',
+                              background: trendGranularity === g ? 'var(--text)' : 'transparent',
+                              border: `1px solid ${trendGranularity === g ? 'var(--text)' : 'var(--border)'}`,
+                              color: trendGranularity === g ? 'var(--bg)' : 'var(--muted)',
+                            }}>
+                              {g === 'day' ? 'Daily' : 'Monthly'}
+                            </button>
+                          ))}
+                        </div>
+                        <TrendChangeBadge pct={data?.trendChangePct ?? null} />
+                      </div>
+                    }
+                  >
                     {trendData.length > 0 ? (
                       <ResponsiveContainer width="100%" height={150}>
                         <AreaChart data={trendData} margin={{ top: 14, right: 8, left: -20, bottom: 0 }}>
@@ -289,7 +335,7 @@ function DashboardInner() {
                           </defs>
                           <XAxis dataKey="name" tick={{ fill: '#2A3560', fontSize: 9 }} axisLine={false} tickLine={false} />
                           <YAxis tick={{ fill: '#2A3560', fontSize: 9 }} axisLine={false} tickLine={false} />
-                          <Tooltip contentStyle={{ background: '#0E1333', border: '1px solid #1A2550', borderRadius: 4, fontSize: 11 }} />
+                          <Tooltip contentStyle={{ background: 'var(--tooltip-bg)', border: '1px solid var(--tooltip-border)', borderRadius: 4, fontSize: 11 }} labelStyle={{ color: 'var(--text)' }} itemStyle={{ color: 'var(--text)' }} />
                           {/* Neutral-tinted band between Findings and the previous-window
                               line: bandLow (invisible) lifts the stack to the lower of the
                               two values, bandRange (visible) stacks the gap on top of it —
@@ -319,7 +365,7 @@ function DashboardInner() {
 
                 {/* FINDINGS TABLE */}
                 <FindingsCard findings={findings} svcTabs={meta.svcTabs} label={meta.findingsLabel} />
-              </>
+              </div>
             )}
 
           </div>
@@ -579,6 +625,50 @@ function Card({ title, sub, children, color = '#00C2FF', right }: { title: strin
         {right}
       </div>
       {children}
+    </div>
+  );
+}
+
+/** One-line, data-derived takeaway shown above the KPI row — reuses the
+ * trend/kpi numbers already fetched for the page, no extra request. Picks
+ * the most relevant signal available: trend delta first (it's the richest
+ * comparison), then open criticals, then a plain "all clear" or "no data"
+ * fallback so the strip never reads as broken when the audit history is
+ * too short for a trend yet. */
+function InsightStrip({ data }: { data: DashData }) {
+  const pct = data.trendChangePct;
+  const critical = data.kpi.critical;
+  const total = data.kpi.total;
+
+  let text: string;
+  let color = 'var(--accent)';
+  let icon = '💡';
+
+  if (pct !== null && pct !== 0) {
+    const improved = pct < 0;
+    color = improved ? 'var(--good)' : 'var(--crit)';
+    icon = improved ? '✓' : '⚠';
+    text = `Total findings ${improved ? 'dropped' : 'rose'} ${Math.abs(pct).toFixed(1)}% vs the previous 10 audits${improved ? ' — nice work.' : '.'}`;
+  } else if (critical > 0) {
+    color = 'var(--crit)';
+    icon = '⚠';
+    text = `${critical} critical finding${critical === 1 ? '' : 's'} need attention right now.`;
+  } else if (total === 0) {
+    icon = '○';
+    text = 'No findings recorded yet — run an audit to populate this dashboard.';
+  } else {
+    color = 'var(--good)';
+    icon = '✓';
+    text = `All clear on critical findings — ${total} total finding${total === 1 ? '' : 's'} tracked.`;
+  }
+
+  return (
+    <div className="glass" style={{
+      borderRadius: 8, padding: '7px 14px', display: 'flex', alignItems: 'center', gap: 8,
+      border: `1px solid ${color}44`, fontSize: 11.5, color: 'var(--text)', flexShrink: 0,
+    }}>
+      <span style={{ fontSize: 12, color }}>{icon}</span>
+      <span>{text}</span>
     </div>
   );
 }
@@ -1142,24 +1232,27 @@ function FindingsCard({ findings, svcTabs, label }: { findings: Finding[]; svcTa
           <thead>
             <tr>
               {['Severity', 'Service', 'Resource', 'Owner', 'Category', 'Description'].map(h => (
-                <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontSize: 9.5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--muted)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>{h}</th>
+                <th key={h} style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--card2)', padding: '6px 10px', textAlign: 'left', fontSize: 9.5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--muted)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {visible.map(f => (
-              <tr key={f.id} onClick={() => setDetail(f)} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(0,194,255,0.05)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+            {visible.map((f, i) => {
+              const rowBg = i % 2 === 1 ? 'rgba(255,255,255,0.025)' : 'transparent';
+              return (
+              <tr key={f.id} onClick={() => setDetail(f)} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', background: rowBg, transition: 'background 0.1s' }}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(0,194,255,0.08)'}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = rowBg}
               >
-                <td style={{ padding: '8px 10px' }}><SevChip sev={f.severity} /></td>
+                <td style={{ padding: '8px 10px', borderLeft: `3px solid ${SEV_COLOR[f.severity] ?? 'transparent'}66` }}><SevChip sev={f.severity} /></td>
                 <td style={{ padding: '8px 10px', color: 'var(--accent)', fontSize: 11, fontFamily: 'Consolas,monospace' }}>{f.service}</td>
                 <td style={{ padding: '8px 10px', color: 'var(--text)', fontWeight: 500, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.resource || '—'}</td>
                 <td style={{ padding: '8px 10px', color: f.owner ? '#B39DDB' : 'var(--dim)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.owner || '—'}</td>
                 <td style={{ padding: '8px 10px', color: 'var(--muted)' }}>{f.category}</td>
                 <td style={{ padding: '8px 10px', color: 'var(--text)', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.description}</td>
               </tr>
-            ))}
+              );
+            })}
             {tabFindings.length === 0 && (
               <tr><td colSpan={6} style={{ padding: '24px 10px', textAlign: 'center', color: 'var(--muted)' }}>
                 No {[sevTab !== 'All' ? sevTab.toLowerCase() : '', svcKey !== 'all' ? activeSvcCfg.label : ''].filter(Boolean).join(' / ') || 'matching'} findings.
